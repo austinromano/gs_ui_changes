@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+allowBuilds:
+  better-sqlite3: false
+  electron: false
+  es5-ext: false
+  esbuild: false

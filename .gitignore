@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+apps/plugin/build/
+apps/desktop/dist/
+apps/server/dist/
+apps/server/uploads/
+apps/electron/dist/
+GhostSession/build/
+JUCE/

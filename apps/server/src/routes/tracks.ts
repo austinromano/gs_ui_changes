@@ -1,0 +1,153 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import { HTTPException } from 'hono/http-exception';
+import { db } from '../db/index.js';
+import { tracks, projectMembers, projects, notifications } from '../db/schema.js';
+import { eq, and, ne } from 'drizzle-orm';
+import { authMiddleware, type AuthUser } from '../middleware/auth.js';
+import { assertMember, assertEditor } from '../lib/membership.js';
+import { createAutoSnapshot } from '../lib/autoSnapshot.js';
+import { postActivityComment } from '../lib/activityComment.js';
+import { emitProjectUpdated } from '../ws/index.js';
+
+const trackRoutes = new Hono();
+trackRoutes.use('*', authMiddleware);
+
+const addTrackSchema = z.object({
+  name: z.string().min(1).max(100),
+  type: z.enum(['audio', 'midi', 'drum', 'loop', 'fullmix']).default('audio'),
+  fileId: z.string().optional(),
+  fileName: z.string().optional(),
+  bpm: z.number().optional(),
+  key: z.string().optional(),
+});
+
+const updateTrackSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  volume: z.number().min(0).max(1).optional(),
+  pan: z.number().min(-1).max(1).optional(),
+  muted: z.boolean().optional(),
+  soloed: z.boolean().optional(),
+  fileId: z.string().optional(),
+  fileName: z.string().optional(),
+});
+
+trackRoutes.get('/', async (c) => {
+  const projectId = c.req.param('id');
+  const result = await db.select().from(tracks)
+    .where(eq(tracks.projectId, projectId))
+    .orderBy(tracks.position).all();
+  return c.json({ success: true, data: result });
+});
+
+trackRoutes.post('/', async (c) => {
+  const user = c.get('user') as AuthUser;
+  const projectId = c.req.param('id');
+  const body = addTrackSchema.parse(await c.req.json());
+
+  await assertEditor(projectId, user.id);
+
+  const existing = await db.select().from(tracks).where(eq(tracks.projectId, projectId)).all();
+  const id = crypto.randomUUID();
+
+  await db.insert(tracks).values({
+    id, ...body, projectId, ownerId: user.id,
+    position: existing.length, createdAt: new Date().toISOString(),
+  }).run();
+
+  const [track] = await db.select().from(tracks).where(eq(tracks.id, id)).all();
+
+  await createAutoSnapshot(projectId, user.id, `Added track: ${body.name}`);
+  await postActivityComment(projectId, user.id, `📎 added a track: ${body.name}`);
+
+  // Notify other project members
+  const [proj] = await db.select({ name: projects.name }).from(projects).where(eq(projects.id, projectId)).limit(1).all();
+  const members = await db.select({ userId: projectMembers.userId }).from(projectMembers)
+    .where(and(eq(projectMembers.projectId, projectId), ne(projectMembers.userId, user.id))).all();
+  const now = new Date().toISOString();
+  for (const m of members) {
+    await db.insert(notifications).values({
+      id: crypto.randomUUID(), userId: m.userId, type: 'track',
+      message: `${user.displayName} added "${body.name}" to ${proj?.name || 'a project'}`,
+      createdAt: now,
+    }).run();
+  }
+
+  emitProjectUpdated(projectId, 'track-added');
+  return c.json({ success: true, data: track }, 201);
+});
+
+trackRoutes.patch('/:trackId', async (c) => {
+  const user = c.get('user') as AuthUser;
+  const projectId = c.req.param('id');
+  const trackId = c.req.param('trackId');
+  const body = updateTrackSchema.parse(await c.req.json());
+
+  await assertEditor(projectId, user.id);
+
+  await db.update(tracks).set(body)
+    .where(and(eq(tracks.id, trackId), eq(tracks.projectId, projectId))).run();
+
+  const [updated] = await db.select().from(tracks)
+    .where(and(eq(tracks.id, trackId), eq(tracks.projectId, projectId))).all();
+  if (!updated) throw new HTTPException(404, { message: 'Track not found' });
+
+  await createAutoSnapshot(projectId, user.id, `Updated track: ${updated.name}`);
+
+  emitProjectUpdated(projectId, 'track-updated');
+  return c.json({ success: true, data: updated });
+});
+
+trackRoutes.put('/reorder', async (c) => {
+  const user = c.get('user') as AuthUser;
+  const projectId = c.req.param('id');
+  const { trackIds } = z.object({ trackIds: z.array(z.string()) }).parse(await c.req.json());
+
+  await assertEditor(projectId, user.id);
+
+  for (let i = 0; i < trackIds.length; i++) {
+    await db.update(tracks).set({ position: i })
+      .where(and(eq(tracks.id, trackIds[i]), eq(tracks.projectId, projectId))).run();
+  }
+
+  emitProjectUpdated(projectId, 'tracks-reordered');
+  return c.json({ success: true });
+});
+
+trackRoutes.delete('/:trackId', async (c) => {
+  const user = c.get('user') as AuthUser;
+  const projectId = c.req.param('id');
+  const trackId = c.req.param('trackId');
+
+  const [track] = await db.select().from(tracks)
+    .where(and(eq(tracks.id, trackId), eq(tracks.projectId, projectId))).limit(1).all();
+  if (!track) throw new HTTPException(404, { message: 'Track not found' });
+
+  if (track.ownerId !== user.id) {
+    await assertEditor(projectId, user.id);
+  }
+
+  const deletedName = track.name;
+  await db.delete(tracks).where(eq(tracks.id, trackId)).run();
+
+  await createAutoSnapshot(projectId, user.id, `Deleted track: ${deletedName}`);
+  await postActivityComment(projectId, user.id, `🗑️ removed a track: ${deletedName}`);
+
+  // Notify other project members
+  const [proj] = await db.select({ name: projects.name }).from(projects).where(eq(projects.id, projectId)).limit(1).all();
+  const members = await db.select({ userId: projectMembers.userId }).from(projectMembers)
+    .where(and(eq(projectMembers.projectId, projectId), ne(projectMembers.userId, user.id))).all();
+  const now = new Date().toISOString();
+  for (const m of members) {
+    await db.insert(notifications).values({
+      id: crypto.randomUUID(), userId: m.userId, type: 'track',
+      message: `${user.displayName} removed "${deletedName}" from ${proj?.name || 'a project'}`,
+      createdAt: now,
+    }).run();
+  }
+
+  emitProjectUpdated(projectId, 'track-deleted');
+  return c.json({ success: true });
+});
+
+export default trackRoutes;

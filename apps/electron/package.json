@@ -1,0 +1,66 @@
+{
+  "name": "ghost-session",
+  "version": "1.0.0",
+  "description": "Ghost Session — collaborative music production platform",
+  "main": "main.js",
+  "author": "Ghost Audio",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "electron-is-dev": "^2.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.ghostaudio.ghostsession",
+    "productName": "Ghost Session",
+    "files": [
+      "main.js",
+      "preload.js",
+      "server/**/*",
+      "frontend/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../server",
+        "to": "server",
+        "filter": ["**/*", "!node_modules/**"]
+      },
+      {
+        "from": "../desktop/dist",
+        "to": "frontend"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "icons/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["universal"]
+        }
+      ],
+      "darkModeSupport": true
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "icons/icon.ico"
+    },
+    "dmg": {
+      "title": "Ghost Session",
+      "backgroundColor": "#0F0F18"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
+  }
+}

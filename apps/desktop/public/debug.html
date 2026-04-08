@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="background:#0F0F18;color:#0f0;font-family:monospace;padding:20px;font-size:13px;white-space:pre-wrap">
+<div id="log"></div>
+<script>
+var logEl = document.getElementById('log');
+function log(msg) { logEl.textContent += msg + '\n'; }
+
+// Capture ALL errors
+window.onerror = function(msg, src, line, col, err) {
+  log('ERROR: ' + msg + '\n  at ' + src + ':' + line + ':' + col);
+  if (err && err.stack) log('STACK: ' + err.stack);
+  return true;
+};
+window.addEventListener('unhandledrejection', function(e) {
+  log('UNHANDLED PROMISE: ' + (e.reason ? (e.reason.stack || e.reason.message || e.reason) : e));
+});
+
+log('Loading app via script tags...');
+
+// Load the real app's index.html content
+fetch('/?mode=plugin')
+  .then(r => r.text())
+  .then(html => {
+    log('Got index HTML, extracting scripts...');
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(html, 'text/html');
+    var scripts = doc.querySelectorAll('script');
+    log('Found ' + scripts.length + ' script tags');
+
+    // Load each script
+    scripts.forEach(function(s, i) {
+      var newScript = document.createElement('script');
+      if (s.type) newScript.type = s.type;
+      if (s.src) {
+        newScript.src = s.src;
+        log('Loading script[' + i + ']: ' + s.src);
+      } else {
+        newScript.textContent = s.textContent;
+        log('Inline script[' + i + ']: ' + s.textContent.substring(0, 80) + '...');
+      }
+      document.head.appendChild(newScript);
+    });
+
+    // Also need the root div
+    if (!document.getElementById('root')) {
+      var root = document.createElement('div');
+      root.id = 'root';
+      document.body.appendChild(root);
+      log('Created #root div');
+    }
+
+    // Check after a delay if React rendered anything
+    setTimeout(function() {
+      var root = document.getElementById('root');
+      log('\n--- After 3s ---');
+      log('Root innerHTML length: ' + (root ? root.innerHTML.length : 'NO ROOT'));
+      log('Root children: ' + (root ? root.children.length : 0));
+      if (root && root.innerHTML.length < 10) {
+        log('WARNING: React did not render! App may have crashed silently.');
+      }
+    }, 3000);
+  })
+  .catch(e => log('FETCH ERROR: ' + e.message));
+</script>
+</body></html>
