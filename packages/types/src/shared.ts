@@ -13,6 +13,7 @@ export interface Invitation {
   id: string;
   projectName: string;
   inviterName: string;
+  createdAt?: string;
 }
 
 export interface AppNotification {

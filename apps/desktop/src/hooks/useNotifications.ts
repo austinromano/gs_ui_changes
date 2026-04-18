@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { Invitation, AppNotification } from '@ghost/types';
 import { api } from '../lib/api';
 import { API_BASE } from '../lib/constants';
@@ -7,9 +7,24 @@ import { devWarn } from '../lib/log';
 
 export type { Invitation, AppNotification };
 
+const BELL_SEEN_KEY = 'ghost_bell_seen_at';
+const INBOX_SEEN_KEY = 'ghost_inbox_seen_at';
+
+function readSeenAt(key: string): number {
+  const raw = localStorage.getItem(key);
+  const parsed = raw ? parseInt(raw, 10) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isLoop(n: AppNotification) {
+  return n.type === 'loop' || n.message.includes('🎵');
+}
+
 export function useNotifications() {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [bellSeenAt, setBellSeenAt] = useState<number>(() => readSeenAt(BELL_SEEN_KEY));
+  const [inboxSeenAt, setInboxSeenAt] = useState<number>(() => readSeenAt(INBOX_SEEN_KEY));
 
   const fetchInvitations = async () => {
     try {
@@ -87,6 +102,42 @@ export function useNotifications() {
     return () => window.removeEventListener('ghost-loop-sent', handler);
   }, []);
 
+  // Unread counts: items newer than the last time the user opened that popup.
+  // Keeps invitations/notifications visible in the popup but clears the badge.
+  const bellUnreadCount = useMemo(() => {
+    const newInvites = invitations.filter((inv) => {
+      const ts = inv.createdAt ? Date.parse(inv.createdAt) : 0;
+      return ts > bellSeenAt;
+    }).length;
+    const newChats = notifications.filter((n) => {
+      if (isLoop(n)) return false;
+      return Date.parse(n.createdAt) > bellSeenAt;
+    }).length;
+    return newInvites + newChats;
+  }, [invitations, notifications, bellSeenAt]);
+
+  const inboxUnreadCount = useMemo(() => {
+    const newServerLoops = notifications.filter((n) => {
+      if (!isLoop(n)) return false;
+      return Date.parse(n.createdAt) > inboxSeenAt;
+    }).length;
+    const newLocalLoops = loopMessages.filter((lm) => Date.parse(lm.timestamp) > inboxSeenAt).length;
+    return newServerLoops + newLocalLoops;
+  }, [notifications, loopMessages, inboxSeenAt]);
+
+  const markBellSeen = () => {
+    const now = Date.now();
+    localStorage.setItem(BELL_SEEN_KEY, String(now));
+    setBellSeenAt(now);
+    markAllRead();
+  };
+
+  const markInboxSeen = () => {
+    const now = Date.now();
+    localStorage.setItem(INBOX_SEEN_KEY, String(now));
+    setInboxSeenAt(now);
+  };
+
   return {
     invitations,
     notifications,
@@ -98,6 +149,10 @@ export function useNotifications() {
     acceptInvite,
     declineInvite,
     markAllRead,
+    bellUnreadCount,
+    inboxUnreadCount,
+    markBellSeen,
+    markInboxSeen,
     totalCount: invitations.length + notifications.length + loopMessages.length,
   };
 }

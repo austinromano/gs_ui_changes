@@ -544,13 +544,24 @@ export default function PluginLayout() {
                             </svg>
                           </button>
                           <button
-                            onClick={() => { setShowNotifs(!showNotifs); setShowSettings(false); }}
+                            onClick={() => {
+                              const opening = !showNotifs;
+                              setShowNotifs(opening);
+                              setShowSettings(false);
+                              if (opening) notifs.markBellSeen();
+                            }}
                             className="text-white/40 hover:text-ghost-green transition-colors"
                           >
-                            <BellIcon count={notifs.invitations.length + notifs.notifications.filter((n: any) => n.type !== 'loop' && !n.message.includes('🎵')).length} />
+                            <BellIcon count={notifs.bellUnreadCount} />
                           </button>
                           <button
-                            onClick={() => { setShowInbox(!showInbox); setShowNotifs(false); setShowSettings(false); }}
+                            onClick={() => {
+                              const opening = !showInbox;
+                              setShowInbox(opening);
+                              setShowNotifs(false);
+                              setShowSettings(false);
+                              if (opening) notifs.markInboxSeen();
+                            }}
                             className="text-white/40 hover:text-ghost-green transition-colors relative"
                             title="Inbox"
                           >
@@ -558,14 +569,11 @@ export default function PluginLayout() {
                               <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
                               <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
                             </svg>
-                            {(() => {
-                              const loopCount = notifs.notifications.filter((n: any) => n.type === 'loop' || n.message.includes('🎵')).length + (notifs.loopMessages?.length || 0);
-                              return loopCount > 0 ? (
-                                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-ghost-green text-black text-[9px] font-bold rounded-full flex items-center justify-center">
-                                  {loopCount}
-                                </span>
-                              ) : null;
-                            })()}
+                            {notifs.inboxUnreadCount > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-ghost-green text-black text-[9px] font-bold rounded-full flex items-center justify-center">
+                                {notifs.inboxUnreadCount}
+                              </span>
+                            )}
                           </button>
                           <button
                             onClick={() => { setShowSettings(!showSettings); setShowNotifs(false); }}
