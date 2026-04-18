@@ -58,7 +58,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const newMessages = s.chatMessages.filter((m) => m.timestamp > lastHistoryTs);
         return { chatMessages: [...history, ...newMessages] };
       });
-    }).catch(() => {});
+    }).catch((err) => { if (typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV) console.warn('[sessionStore] chat fetch failed:', err); });
 
     // Re-join room on reconnect (server creates a new socket, so room membership is lost)
     reconnectHandler = () => {
@@ -148,7 +148,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           }
           return { chatMessages: merged };
         });
-      }).catch(() => {});
+      }).catch((err) => { if (typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV) console.warn('[sessionStore] chat fetch failed:', err); });
     }, 4000);
   },
 

@@ -55,13 +55,14 @@ function PresenceFriendsList({ friends, onlineActivity, selectProject, onRemoveF
                 e.preventDefault();
                 e.currentTarget.style.transform = '';
                 e.currentTarget.style.filter = '';
-                try {
-                  const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-                  if (data.type === 'loop') {
-                    // Send notification to the friend's inbox
-                    api.sendNotification(f.id, `🎵 Loop received: ${data.name}`, 'loop').catch(() => {});
-                  }
-                } catch {}
+                const raw = e.dataTransfer.getData('text/plain');
+                if (!raw) return;
+                let data: { type?: string; name?: string };
+                try { data = JSON.parse(raw); } catch { return; }
+                if (data?.type === 'loop' && data.name) {
+                  api.sendNotification(f.id, `🎵 Loop received: ${data.name}`, 'loop')
+                    .catch((err) => { if (import.meta.env.DEV) console.warn('[presence] sendNotification failed:', err); });
+                }
               }}
             >
               <div className="rounded-[16px] overflow-hidden transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.3)] hover:rounded-full">

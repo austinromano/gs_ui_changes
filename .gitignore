@@ -3,6 +3,7 @@ dist/
 .DS_Store
 *.log
 .env
+.claude/
 apps/plugin/build/
 apps/desktop/dist/
 apps/server/dist/

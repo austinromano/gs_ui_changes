@@ -46,7 +46,7 @@ function LoopDropBox() {
             setLoops(detail.items.map((item: any) => ({ name: item.name, fileId: item.fileId, data: null })));
           }
         }
-      } catch {}
+      } catch (err) { if (import.meta.env.DEV) console.warn('[ProjectListSidebar] loop-pack load failed:', err); }
     })();
   }, []);
 

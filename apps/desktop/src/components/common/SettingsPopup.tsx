@@ -21,7 +21,7 @@ export default function SettingsPopup({ user, onSignOut, onDeleteAccount, onClos
       const updated = { ...user, avatarUrl };
       useAuthStore.setState({ user: updated });
       localStorage.setItem('ghost_user', JSON.stringify(updated));
-    } catch {}
+    } catch (err) { if (import.meta.env.DEV) console.warn('[SettingsPopup] avatar upload failed:', err); }
     setUploading(false);
   };
 

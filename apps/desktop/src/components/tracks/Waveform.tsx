@@ -44,7 +44,7 @@ export default memo(function Waveform({
     if (!peaksCache.has(fileId)) {
       getPeaks(projectId, fileId).then((p) => {
         if (!cancelled && p) setServerPeaks(p);
-      }).catch(() => {});
+      }).catch((err) => { if (import.meta.env.DEV) console.warn('[Waveform] getPeaks failed:', err); });
     }
 
     // 2) Kick off full decode in background for playback, trim handles, etc.

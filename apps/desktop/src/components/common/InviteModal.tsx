@@ -10,7 +10,7 @@ export default function InviteModal({ open, onClose, projectId, onInvited }: { o
 
   useEffect(() => {
     if (open) {
-      api.listUsers().then(setAllUsers).catch(() => {});
+      api.listUsers().then(setAllUsers).catch((err) => { if (import.meta.env.DEV) console.warn('[InviteModal] listUsers failed:', err); });
     }
   }, [open]);
 

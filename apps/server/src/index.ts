@@ -28,13 +28,23 @@ await initDatabase();
 const app = new Hono();
 
 // Global middleware
-app.use('*', cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:5173,http://localhost:1420')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+app.use('*', cors({
+  origin: (origin) => {
+    if (!origin) return origin;
+    if (allowedOrigins.includes('*')) return origin;
+    return allowedOrigins.includes(origin) ? origin : null;
+  },
+  credentials: true,
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+}));
 
-// Debug endpoint for client-side logging
+// Debug endpoint: logs to stdout so it works on any platform (Railway, Linux, Windows).
 app.post('/api/v1/debug', async (c) => {
   const body = await c.req.text();
-  const fs = await import('node:fs');
-  fs.appendFileSync('C:\\Users\\austi\\ghost_client_debug.log', new Date().toISOString() + ' ' + body + '\n');
+  console.log('[client-debug]', new Date().toISOString(), body);
   return c.json({ ok: true });
 });
 
@@ -99,6 +109,7 @@ app.delete('/api/v1/admin/reset-all', authMiddleware, async (c) => {
     `);
     return c.json({ success: true, message: 'All data deleted' });
   } catch (err) {
+    console.error('[admin/reset-all] failed:', err);
     return c.json({ error: 'Reset failed' }, 500);
   }
 });

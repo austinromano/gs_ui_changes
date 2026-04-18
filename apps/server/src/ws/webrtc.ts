@@ -23,12 +23,15 @@ function removeSocket(userId: string, socket: GhostSocket) {
   }
 }
 
-function emitToUser(userId: string, event: string, data: any) {
+function emitToUser<K extends keyof ServerToClientEvents>(
+  userId: string,
+  event: K,
+  data: Parameters<ServerToClientEvents[K]>[0],
+) {
   const sockets = userSockets.get(userId);
-  if (sockets) {
-    for (const s of sockets) {
-      (s.emit as any)(event, data);
-    }
+  if (!sockets) return;
+  for (const s of sockets) {
+    (s.emit as (e: K, d: typeof data) => void)(event, data);
   }
 }
 

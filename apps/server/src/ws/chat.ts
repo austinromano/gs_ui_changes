@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents, SocketData } from '@ghost/protocol';
+import { ChatSendSchema, ChatDeleteSchema } from '@ghost/types';
 import { db } from '../db/index.js';
 import { chatMessages, projectMembers, projects, notifications } from '../db/schema.js';
 import { eq, and, ne } from 'drizzle-orm';
@@ -7,7 +8,13 @@ import { eq, and, ne } from 'drizzle-orm';
 type GhostSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
 
 export function registerChatHandlers(io: Server, socket: GhostSocket) {
-  socket.on('chat-message', ({ projectId, text }) => {
+  socket.on('chat-message', (raw) => {
+    const parsed = ChatSendSchema.safeParse(raw);
+    if (!parsed.success) {
+      socket.emit('error', { message: 'Invalid chat-message payload' });
+      return;
+    }
+    const { projectId, text } = parsed.data;
     const room = `project:${projectId}`;
     const timestamp = Date.now();
 
@@ -61,7 +68,13 @@ export function registerChatHandlers(io: Server, socket: GhostSocket) {
     })();
   });
 
-  socket.on('delete-chat-message', ({ projectId, timestamp, messageId }: any) => {
+  socket.on('delete-chat-message', (raw) => {
+    const parsed = ChatDeleteSchema.safeParse(raw);
+    if (!parsed.success) {
+      socket.emit('error', { message: 'Invalid delete-chat-message payload' });
+      return;
+    }
+    const { projectId, timestamp, messageId } = parsed.data;
     const room = `project:${projectId}`;
 
     (async () => {

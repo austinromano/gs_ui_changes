@@ -40,7 +40,7 @@ export function registerPresenceHandlers(io: Server, socket: GhostSocket, global
     try {
       const [proj] = await db.select({ name: projects.name }).from(projects).where(eq(projects.id, projectId));
       projectName = proj?.name || null;
-    } catch {}
+    } catch (err) { console.warn('[ws.presence] project lookup failed:', err); }
     const entry = globalOnline.get(socket.data.userId);
     if (entry) {
       entry.currentProjectId = projectId;

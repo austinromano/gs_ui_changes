@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Avatar from '../common/Avatar';
 import { API_BASE } from '../../lib/constants';
+import { devWarn } from '../../lib/log';
 
 function SocialAudioPlayer({ audioFileId }: { audioFileId: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,7 +29,7 @@ function SocialAudioPlayer({ audioFileId }: { audioFileId: string }) {
         setWaveData(decoded.getChannelData(0));
         setReady(true);
       })
-      .catch(() => {});
+      .catch((err) => devWarn('SocialFeed.loadAudio', err));
     return () => { cancelled = true; };
   }, [audioFileId]);
 
@@ -131,11 +132,11 @@ function SocialFeed({ user, friends }: { user: any; friends: any[] }) {
   const authHeader = { Authorization: `Bearer ${localStorage.getItem('ghost_token')}` };
   const BASE = `${API_BASE}/social`;
 
-  const loadFeed = () => { setLoading(true); fetch(`${BASE}/feed`, { headers: authHeader }).then(r => r.json()).then(d => { if (d.data) setPosts(d.data); }).catch(() => {}).finally(() => setLoading(false)); };
+  const loadFeed = () => { setLoading(true); fetch(`${BASE}/feed`, { headers: authHeader }).then(r => r.json()).then(d => { if (d.data) setPosts(d.data); }).catch((err) => devWarn('SocialFeed.loadFeed', err)).finally(() => setLoading(false)); };
   useEffect(() => { loadFeed(); }, []);
-  const loadExplore = () => { fetch(`${BASE}/explore`, { headers: authHeader }).then(r => r.json()).then(d => { if (d.data) setExploreUsers(d.data); }).catch(() => {}); };
-  const loadActivity = () => { fetch(`${BASE}/activity`, { headers: authHeader }).then(r => r.json()).then(d => { if (d.data) setActivities(d.data); }).catch(() => {}); };
-  const loadProfile = (userId: string) => { fetch(`${BASE}/profile/${userId}`, { headers: authHeader }).then(r => r.json()).then(d => { if (d.data) setProfileUser(d.data); }).catch(() => {}); };
+  const loadExplore = () => { fetch(`${BASE}/explore`, { headers: authHeader }).then(r => r.json()).then(d => { if (d.data) setExploreUsers(d.data); }).catch((err) => devWarn('SocialFeed.loadExplore', err)); };
+  const loadActivity = () => { fetch(`${BASE}/activity`, { headers: authHeader }).then(r => r.json()).then(d => { if (d.data) setActivities(d.data); }).catch((err) => devWarn('SocialFeed.loadActivity', err)); };
+  const loadProfile = (userId: string) => { fetch(`${BASE}/profile/${userId}`, { headers: authHeader }).then(r => r.json()).then(d => { if (d.data) setProfileUser(d.data); }).catch((err) => devWarn('SocialFeed.loadProfile', err)); };
 
   const handlePost = async () => {
     if (!newPost.trim() && !dropFile) return;
@@ -165,7 +166,7 @@ function SocialFeed({ user, friends }: { user: any; friends: any[] }) {
       const d = await res.json();
       if (d.data) { if (fileName) d.data.audioFileName = fileName; setPosts(prev => [d.data, ...prev]); }
       setNewPost(''); setDropFile(null);
-    } catch {}
+    } catch (err) { devWarn('SocialFeed.handlePost', err); }
     setUploading(false);
   };
   const toggleLike = async (postId: string) => {

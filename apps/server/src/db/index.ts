@@ -186,8 +186,13 @@ export async function initDatabase() {
     `ALTER TABLE users ADD COLUMN avatar_mime TEXT`,
     `ALTER TABLE files ADD COLUMN peaks TEXT`,
   ];
+  // ADD COLUMN migrations are idempotent by design — "duplicate column" is expected
+  // on every boot after the first. Any other error is worth surfacing.
   for (const m of migrations) {
-    try { await client.execute(m); } catch {}
+    try { await client.execute(m); } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column|already exists/i.test(msg)) console.warn('[db.migrate]', m, '→', err);
+    }
   }
 
   // Migrate existing local avatar files into the database
@@ -208,9 +213,9 @@ export async function initDatabase() {
         const base64 = data.toString('base64');
         await client.execute({ sql: `UPDATE users SET avatar_data = ?, avatar_mime = ? WHERE id = ?`, args: [base64, mimeMap[ext] || 'image/jpeg', row.id as string] });
         console.log(`  Migrated avatar for user ${row.id}`);
-      } catch {}
+      } catch (err) { console.warn('[db.avatarBackfill] user', row.id, err); }
     }
-  } catch {}
+  } catch (err) { console.warn('[db.avatarBackfill] scan failed:', err); }
 
   // Performance indexes on FK columns and common query paths
   const indexes = [
@@ -236,7 +241,7 @@ export async function initDatabase() {
     `CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)`,
   ];
   for (const idx of indexes) {
-    try { await client.execute(idx); } catch {}
+    try { await client.execute(idx); } catch (err) { console.warn('[db.index]', idx, '→', err); }
   }
 
   console.log('  Database initialized (Turso/libsql)');

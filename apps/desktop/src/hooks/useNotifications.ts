@@ -3,6 +3,7 @@ import type { Invitation, AppNotification } from '@ghost/types';
 import { api } from '../lib/api';
 import { API_BASE } from '../lib/constants';
 import { useAuthStore } from '../stores/authStore';
+import { devWarn } from '../lib/log';
 
 export type { Invitation, AppNotification };
 
@@ -15,14 +16,14 @@ export function useNotifications() {
       const res = await fetch(API_BASE + '/invitations', { headers: { Authorization: `Bearer ${useAuthStore.getState().token}` } });
       const json = await res.json();
       if (json.data) setInvitations(json.data);
-    } catch {}
+    } catch (err) { devWarn('useNotifications.fetchInvitations', err); }
   };
 
   const fetchNotifications = async () => {
     try {
       const notifs = await api.getNotifications();
       setNotifications(notifs);
-    } catch {}
+    } catch (err) { devWarn('useNotifications.fetchNotifications', err); }
   };
 
   const acceptInvite = async (id: string): Promise<string | null> => {
@@ -35,7 +36,7 @@ export function useNotifications() {
       });
       fetchInvitations();
       return (inv as any)?.projectId || null;
-    } catch { return null; }
+    } catch (err) { devWarn('useNotifications.acceptInvite', err); return null; }
   };
 
   const declineInvite = async (id: string) => {
@@ -46,14 +47,14 @@ export function useNotifications() {
         body: '{}',
       });
       fetchInvitations();
-    } catch {}
+    } catch (err) { devWarn('useNotifications.declineInvite', err); }
   };
 
   const markAllRead = async () => {
     try {
       await api.markNotificationsRead();
       setNotifications([]);
-    } catch {}
+    } catch (err) { devWarn('useNotifications.markAllRead', err); }
   };
 
   // Initial load + polling

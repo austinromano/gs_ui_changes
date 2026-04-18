@@ -46,6 +46,7 @@ invitationRoutes.post('/:id/accept', async (c) => {
   await db.update(invitations).set({ status: 'accepted' })
     .where(eq(invitations.id, invitationId)).run();
 
+  // Duplicate member insert is expected (already joined); only log if it's something else.
   try {
     await db.insert(projectMembers).values({
       projectId: inv.projectId,
@@ -53,7 +54,10 @@ invitationRoutes.post('/:id/accept', async (c) => {
       role: inv.role,
       joinedAt: new Date().toISOString(),
     }).run();
-  } catch {} // already a member
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/UNIQUE|PRIMARY KEY/i.test(msg)) console.warn('[invitations.accept] member insert failed:', err);
+  }
 
   emitProjectUpdated(inv.projectId, 'member-changed');
   return c.json({ success: true });

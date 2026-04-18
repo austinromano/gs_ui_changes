@@ -199,7 +199,7 @@ fileRoutes.get('/:fileId/peaks', async (c) => {
     setCachedPeaks(cacheKey, data);
     // Backfill: persist to DB so future reads skip the WAV parse entirely.
     if (bins === 1024) {
-      try { await db.update(files).set({ peaks: JSON.stringify(data) }).where(eq(files.id, fileId)).run(); } catch {}
+      try { await db.update(files).set({ peaks: JSON.stringify(data) }).where(eq(files.id, fileId)).run(); } catch (err) { console.warn('[files.peaks] persist failed:', err); }
     }
     c.header('Cache-Control', 'public, max-age=31536000, immutable');
     return c.json(data);

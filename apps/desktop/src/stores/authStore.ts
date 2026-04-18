@@ -52,7 +52,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
-    try { await api.logout(); } catch {}
+    try { await api.logout(); } catch (err) { if (import.meta.env.DEV) console.warn('[authStore] logout failed:', err); }
     disconnectSocket();
     setToken(null);
     localStorage.removeItem('ghost_token');

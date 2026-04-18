@@ -107,7 +107,7 @@ projectRoutes.get('/:id', async (c) => {
     const rows = await db.select({ id: files.id, peaks: files.peaks }).from(files).where(inArray(files.id, fileIds)).all();
     for (const r of rows) {
       if (r.peaks) {
-        try { peaksByFileId.set(r.id, JSON.parse(r.peaks)); } catch {}
+        try { peaksByFileId.set(r.id, JSON.parse(r.peaks)); } catch { /* skip corrupt cached peaks */ }
       }
     }
   }
@@ -187,7 +187,10 @@ projectRoutes.post('/:id/members', async (c) => {
       status: 'pending',
       createdAt: new Date().toISOString(),
     }).run();
-  } catch {} // duplicate invitation
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/UNIQUE|PRIMARY KEY/i.test(msg)) console.warn('[projects.invite] insert failed:', err);
+  }
 
   // Auto-add as friend (both directions) so they show in presence bar
   const existingFollow = await db.select().from(follows)

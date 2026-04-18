@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { db } from '../db/index.js';
-import { socialPosts, socialPostLikes, socialPostComments, socialPostReactions, follows, users, projects, tracks } from '../db/schema.js';
+import { socialPosts, socialPostLikes, socialPostComments, socialPostReactions, follows, users, projects, projectMembers, tracks } from '../db/schema.js';
 import { eq, desc, and, ne, inArray, sql, count } from 'drizzle-orm';
 import { authMiddleware, type AuthUser } from '../middleware/auth.js';
 import { isR2Configured, uploadToR2, downloadFromR2 } from '../services/storage.js';
@@ -68,11 +68,19 @@ socialRoutes.post('/posts', async (c) => {
   const user = c.get('user') as AuthUser;
   const { text, projectId, audioFileId } = await c.req.json();
   if (!text?.trim()) return c.json({ success: false, error: 'Text required' }, 400);
+  let projectName = null;
+  if (projectId) {
+    const [membership] = await db.select({ role: projectMembers.role, name: projects.name })
+      .from(projectMembers)
+      .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+      .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, user.id)))
+      .limit(1).all();
+    if (!membership) return c.json({ success: false, error: 'Not a member of this project' }, 403);
+    projectName = membership.name;
+  }
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   await db.insert(socialPosts).values({ id, userId: user.id, text: text.trim(), projectId: projectId || null, audioFileId: audioFileId || null, createdAt }).run();
-  let projectName = null;
-  if (projectId) { const [proj] = await db.select({ name: projects.name }).from(projects).where(eq(projects.id, projectId)).limit(1).all(); projectName = proj?.name || null; }
   return c.json({ success: true, data: { id, text: text.trim(), projectId, audioFileId: audioFileId || null, userId: user.id, displayName: user.displayName, avatarUrl: user.avatarUrl, createdAt, likeCount: 0, commentCount: 0, liked: false, reactionCounts: {}, userReactions: [], projectName } });
 });
 
