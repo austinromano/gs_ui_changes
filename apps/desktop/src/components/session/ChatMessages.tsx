@@ -39,6 +39,7 @@ export default function ChatMessages({ messages, onlineUsers, currentUserId, onD
       {messages.map((msg, origIndex) => {
         const isOwn = msg.userId === currentUserId;
         const sender = onlineUsers.find((u) => u.userId === msg.userId);
+        const avatarUrl = msg.avatarUrl ?? sender?.avatarUrl ?? null;
         const isGif = msg.text.startsWith('[gif]') && msg.text.endsWith('[/gif]');
         const prev = origIndex > 0 ? messages[origIndex - 1] : null;
         const sameAsPrev = !!prev && prev.userId === msg.userId && msg.timestamp - prev.timestamp < 5 * 60 * 1000;
@@ -47,7 +48,7 @@ export default function ChatMessages({ messages, onlineUsers, currentUserId, onD
           <div key={origIndex} className={`group relative flex items-end gap-2 ${isOwn ? 'justify-end' : 'justify-start'} ${sameAsPrev ? 'mt-0.5' : 'mt-3'}`}>
             {!isOwn && (
               <div className={`shrink-0 w-8 ${sameAsPrev ? 'invisible' : ''}`}>
-                <Avatar name={msg.displayName} src={sender?.avatarUrl || null} size="sm" />
+                <Avatar name={msg.displayName} src={avatarUrl} size="sm" />
               </div>
             )}
             <div className={`flex flex-col max-w-[75%] ${isOwn ? 'items-end' : 'items-start'}`}>

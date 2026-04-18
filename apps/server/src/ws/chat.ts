@@ -24,6 +24,7 @@ export function registerChatHandlers(io: Server, socket: GhostSocket) {
       userId: socket.data.userId,
       displayName: socket.data.displayName,
       colour: socket.data.colour,
+      avatarUrl: socket.data.avatarUrl,
       text,
       timestamp,
     };

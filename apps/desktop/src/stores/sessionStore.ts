@@ -185,14 +185,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Optimistically add own message so it appears immediately
     const user = useAuthStore.getState().user;
-    const optimisticMsg = {
+    const optimisticMsg: ChatMessage = {
       id: `local-${Date.now()}`,
       userId: user?.id || '',
       displayName: (user as any)?.displayName || (user as any)?.name || 'You',
       colour: '#8B5CF6',
+      avatarUrl: (user as any)?.avatarUrl ?? null,
       text,
       timestamp: Date.now(),
-    } as ChatMessage;
+    };
     set((s) => ({ chatMessages: [...s.chatMessages, optimisticMsg] }));
 
     sendChat(currentProjectId, text);

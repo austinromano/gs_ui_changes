@@ -7,6 +7,7 @@ export interface ChatMessage {
   colour: string;
   text: string;
   timestamp: number;
+  avatarUrl?: string | null;
 }
 
 export interface Invitation {

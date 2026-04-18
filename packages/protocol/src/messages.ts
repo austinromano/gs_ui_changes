@@ -18,6 +18,7 @@ export interface ChatMessagePayload {
   colour: string;
   text: string;
   timestamp: number;
+  avatarUrl?: string | null;
 }
 
 export interface ClientToServerEvents {

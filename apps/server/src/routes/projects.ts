@@ -266,24 +266,29 @@ projectRoutes.get('/:id/chat', async (c) => {
   const limit = parseInt(c.req.query('limit') || '100', 10);
 
   const messages = (await db.select({
+    id: chatMessages.id,
     userId: chatMessages.userId,
     displayName: chatMessages.displayName,
     colour: chatMessages.colour,
     text: chatMessages.text,
     createdAt: chatMessages.createdAt,
+    avatarUrl: users.avatarUrl,
   })
     .from(chatMessages)
+    .leftJoin(users, eq(users.id, chatMessages.userId))
     .where(eq(chatMessages.projectId, projectId))
     .orderBy(desc(chatMessages.createdAt))
     .limit(limit)
     .all())
     .reverse() // oldest first
     .map((m) => ({
+      id: m.id,
       userId: m.userId,
       displayName: m.displayName,
       colour: m.colour,
       text: m.text,
       timestamp: new Date(m.createdAt).getTime(),
+      avatarUrl: m.avatarUrl,
     }));
 
   return c.json({ success: true, data: messages });
