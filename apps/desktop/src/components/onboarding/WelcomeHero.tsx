@@ -53,7 +53,7 @@ export default function WelcomeHero({ userName, hasProjects, onCreateProject, on
         className="relative max-w-4xl w-full text-center z-10"
       >
         {/* Ghost mark */}
-        <motion.div variants={rise} className="flex justify-center mb-8">
+        <motion.div variants={rise} className="flex justify-center mt-16 mb-6">
           <motion.div
             className="relative"
             animate={{ y: [0, -8, 0] }}
