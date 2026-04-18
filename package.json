@@ -2,8 +2,8 @@
   "name": "ghost-session",
   "private": true,
   "scripts": {
-    "build": "cd apps/server && echo 'ready'",
-    "start": "cd apps/server && npx tsx src/index.ts"
+    "build": "pnpm --filter @ghost/types run build && pnpm --filter @ghost/protocol run build",
+    "start": "pnpm run build && cd apps/server && npx tsx src/index.ts"
   },
   "engines": {
     "node": ">=20"
