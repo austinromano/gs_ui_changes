@@ -152,56 +152,109 @@ export default memo(function Waveform({
     }
     }
 
+    // Timbre signals from raw audio when available: zero-crossing rate drives
+    // hue (bass → red, air → violet); crest factor drives saturation (spiky
+    // percussive hits pop against smooth tones); onset delta brightens attacks.
+    let zcr: Float32Array | null = null;
+    let crest: Float32Array | null = null;
+    let onset: Float32Array | null = null;
+    if (audioData) {
+      zcr = new Float32Array(w);
+      crest = new Float32Array(w);
+      onset = new Float32Array(w);
+      const samplesPerPixel = audioData.length / w;
+      for (let x = 0; x < w; x++) {
+        const start = Math.floor(x * samplesPerPixel);
+        const end = Math.min(Math.floor((x + 1) * samplesPerPixel), audioData.length);
+        let zc = 0, prevSign = 0, maxAbs = 0, sumSq = 0;
+        for (let j = start; j < end; j++) {
+          const v = audioData[j];
+          const abs = v < 0 ? -v : v;
+          if (abs > maxAbs) maxAbs = abs;
+          sumSq += v * v;
+          const sign = v > 0 ? 1 : v < 0 ? -1 : 0;
+          if (prevSign !== 0 && sign !== 0 && sign !== prevSign) zc++;
+          if (sign !== 0) prevSign = sign;
+        }
+        const count = end - start;
+        zcr[x] = count > 0 ? zc / count : 0;
+        const r = count > 0 ? Math.sqrt(sumSq / count) : 0;
+        crest[x] = r > 1e-6 ? maxAbs / r : 1;
+      }
+      for (let x = 1; x < w; x++) onset[x] = Math.max(0, rms[x] - rms[x - 1]);
+    }
+
     const scalePeak = mid * 0.9;
     const scaleRms = mid * 1.7; // amplify RMS — it's always smaller than peak
 
-    // Aurora gradients — horizontal ribbon of indigo → violet → fuchsia → violet → indigo.
-    // Symmetric so short and long clips both read as balanced.
-    const bodyGrad = ctx.createLinearGradient(0, 0, w, 0);
-    bodyGrad.addColorStop(0,    '#6366F1'); // indigo
-    bodyGrad.addColorStop(0.28, '#A855F7'); // violet
-    bodyGrad.addColorStop(0.5,  '#EC4899'); // pink peak
-    bodyGrad.addColorStop(0.72, '#A855F7'); // violet
-    bodyGrad.addColorStop(1,    '#6366F1'); // indigo
+    if (zcr && crest && onset) {
+      // Per-column spectral coloring. Each pixel column gets its own hue from
+      // frequency content, rendered as a 1px-wide vertical bar (halo + body).
+      for (let x = 0; x < w; x++) {
+        const peakTop = peaks[x] * scalePeak;
+        if (peakTop < 0.5) continue;
+        const rmsTop = Math.min(rms[x] * scaleRms, peakTop);
+        // ZCR in the 0..0.25 range maps to 0..280° (red → violet). sqrt curve
+        // spreads the low/mid range so drums and bass read distinctly.
+        const hue = Math.min(280, Math.sqrt(zcr[x]) * 560);
+        // Crest factor: sine ≈ 1.41, percussive hits 3+. Clamp to 40% boost.
+        const sat = 55 + Math.min(35, (crest[x] - 1.4) * 10);
+        // Onset energy brightens attacks — caps at +18% lightness.
+        const light = 52 + Math.min(18, onset[x] * 140);
+        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, 0.32)`;
+        ctx.fillRect(x, mid - peakTop, 1, peakTop * 2);
+        ctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
+        ctx.fillRect(x, mid - rmsTop, 1, rmsTop * 2);
+      }
 
-    const haloGrad = ctx.createLinearGradient(0, 0, w, 0);
-    haloGrad.addColorStop(0,    'rgba(99, 102, 241, 0.30)');
-    haloGrad.addColorStop(0.28, 'rgba(168, 85, 247, 0.34)');
-    haloGrad.addColorStop(0.5,  'rgba(236, 72, 153, 0.34)');
-    haloGrad.addColorStop(0.72, 'rgba(168, 85, 247, 0.34)');
-    haloGrad.addColorStop(1,    'rgba(99, 102, 241, 0.30)');
+      // Subtle center reference line — neutral so it doesn't fight per-column hues.
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.fillRect(0, mid - 0.5, w, 1);
+    } else {
+      // Aurora gradient fallback while raw audio is still decoding.
+      const bodyGrad = ctx.createLinearGradient(0, 0, w, 0);
+      bodyGrad.addColorStop(0,    '#6366F1');
+      bodyGrad.addColorStop(0.28, '#A855F7');
+      bodyGrad.addColorStop(0.5,  '#EC4899');
+      bodyGrad.addColorStop(0.72, '#A855F7');
+      bodyGrad.addColorStop(1,    '#6366F1');
 
-    // Peak halo (outer translucent shape)
-    ctx.beginPath();
-    ctx.moveTo(0, mid - peaks[0] * scalePeak);
-    for (let x = 1; x < w; x++) ctx.lineTo(x, mid - peaks[x] * scalePeak);
-    for (let x = w - 1; x >= 0; x--) ctx.lineTo(x, mid + peaks[x] * scalePeak);
-    ctx.closePath();
-    ctx.fillStyle = haloGrad;
-    ctx.fill();
+      const haloGrad = ctx.createLinearGradient(0, 0, w, 0);
+      haloGrad.addColorStop(0,    'rgba(99, 102, 241, 0.30)');
+      haloGrad.addColorStop(0.28, 'rgba(168, 85, 247, 0.34)');
+      haloGrad.addColorStop(0.5,  'rgba(236, 72, 153, 0.34)');
+      haloGrad.addColorStop(0.72, 'rgba(168, 85, 247, 0.34)');
+      haloGrad.addColorStop(1,    'rgba(99, 102, 241, 0.30)');
 
-    // RMS body (inner solid shape)
-    ctx.beginPath();
-    ctx.moveTo(0, mid - Math.min(rms[0] * scaleRms, peaks[0] * scalePeak));
-    for (let x = 1; x < w; x++) {
-      const top = Math.min(rms[x] * scaleRms, peaks[x] * scalePeak);
-      ctx.lineTo(x, mid - top);
+      ctx.beginPath();
+      ctx.moveTo(0, mid - peaks[0] * scalePeak);
+      for (let x = 1; x < w; x++) ctx.lineTo(x, mid - peaks[x] * scalePeak);
+      for (let x = w - 1; x >= 0; x--) ctx.lineTo(x, mid + peaks[x] * scalePeak);
+      ctx.closePath();
+      ctx.fillStyle = haloGrad;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(0, mid - Math.min(rms[0] * scaleRms, peaks[0] * scalePeak));
+      for (let x = 1; x < w; x++) {
+        const top = Math.min(rms[x] * scaleRms, peaks[x] * scalePeak);
+        ctx.lineTo(x, mid - top);
+      }
+      for (let x = w - 1; x >= 0; x--) {
+        const top = Math.min(rms[x] * scaleRms, peaks[x] * scalePeak);
+        ctx.lineTo(x, mid + top);
+      }
+      ctx.closePath();
+      ctx.fillStyle = bodyGrad;
+      ctx.fill();
+
+      const centerGrad = ctx.createLinearGradient(0, 0, w, 0);
+      centerGrad.addColorStop(0,   'rgba(99, 102, 241, 0.18)');
+      centerGrad.addColorStop(0.5, 'rgba(236, 72, 153, 0.22)');
+      centerGrad.addColorStop(1,   'rgba(99, 102, 241, 0.18)');
+      ctx.fillStyle = centerGrad;
+      ctx.fillRect(0, mid - 0.5, w, 1);
     }
-    for (let x = w - 1; x >= 0; x--) {
-      const top = Math.min(rms[x] * scaleRms, peaks[x] * scalePeak);
-      ctx.lineTo(x, mid + top);
-    }
-    ctx.closePath();
-    ctx.fillStyle = bodyGrad;
-    ctx.fill();
-
-    // Subtle center reference line — match the aurora hue at that column
-    const centerGrad = ctx.createLinearGradient(0, 0, w, 0);
-    centerGrad.addColorStop(0,   'rgba(99, 102, 241, 0.18)');
-    centerGrad.addColorStop(0.5, 'rgba(236, 72, 153, 0.22)');
-    centerGrad.addColorStop(1,   'rgba(99, 102, 241, 0.18)');
-    ctx.fillStyle = centerGrad;
-    ctx.fillRect(0, mid - 0.5, w, 1);
   }, [audioData, serverPeaks]);
 
   useEffect(() => {
