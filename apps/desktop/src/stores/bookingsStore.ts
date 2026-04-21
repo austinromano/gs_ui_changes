@@ -44,10 +44,15 @@ export const useBookingsStore = create<BookingsState>((set, get) => ({
       socket.on('booking-updated', (payload) => {
         const current = get().bookings;
         if (payload.kind === 'deleted') {
+          // Booking gone → drop it from state and pull a fresh projects
+          // list so any auto-created shared project that the server
+          // cleaned up disappears from the sidebar too.
+          const gone = current.find((b) => b.id === payload.bookingId);
           set({
             bookings: current.filter((b) => b.id !== payload.bookingId),
             inviteQueue: get().inviteQueue.filter((b) => b.id !== payload.bookingId),
           });
+          if (gone?.projectId) useProjectStore.getState().fetchProjects();
           return;
         }
         const booking = payload.booking as Booking | undefined;
@@ -59,6 +64,12 @@ export const useBookingsStore = create<BookingsState>((set, get) => ({
           const next = [...current];
           next[idx] = booking;
           set({ bookings: next });
+        }
+
+        // When a booking is canceled and its shared project was torn down,
+        // pull a fresh projects list so the sidebar drops the stale room.
+        if (booking.status === 'canceled' && prev?.projectId) {
+          useProjectStore.getState().fetchProjects();
         }
 
         // Enqueue a toast for invites addressed to me that are still pending.
@@ -117,16 +128,26 @@ export const useBookingsStore = create<BookingsState>((set, get) => ({
   },
 
   cancel: async (id) => {
+    const prev = get().bookings.find((b) => b.id === id);
     const updated = await api.updateBooking(id, { status: 'canceled' });
     set({ bookings: get().bookings.map((b) => b.id === id ? updated : b) });
+    // Refresh the projects list so the host's sidebar drops the auto-created
+    // shared project the server just tore down.
+    if (prev?.projectId) {
+      await useProjectStore.getState().fetchProjects();
+    }
   },
 
   remove: async (id) => {
+    const prev = get().bookings.find((b) => b.id === id);
     await api.deleteBooking(id);
     set({
       bookings: get().bookings.filter((b) => b.id !== id),
       inviteQueue: get().inviteQueue.filter((b) => b.id !== id),
     });
+    if (prev?.projectId) {
+      await useProjectStore.getState().fetchProjects();
+    }
   },
 
   dismissInvite: (id) => {

@@ -75,6 +75,18 @@ export default function PluginLayout() {
   const samplePackState = useSamplePacks();
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  // If the currently-selected project disappears from the list (e.g. host
+  // canceled the shared session while the invitee was inside it), step back
+  // to the home screen so we're not staring at a dead project.
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    if (projects.length === 0) return; // still loading
+    if (!projects.some((p) => p.id === selectedProjectId)) {
+      setSelectedProjectId(null);
+    }
+  }, [projects, selectedProjectId]);
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
   const [showMarketplace, setShowMarketplace] = useState(false);

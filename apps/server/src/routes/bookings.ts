@@ -147,6 +147,14 @@ bookingsRoutes.patch('/:id', async (c) => {
     patch.projectId = projectId;
   }
 
+  // On cancellation, tear down the auto-created project too so the invitee's
+  // sidebar clears. project_members has ON DELETE CASCADE, so deleting the
+  // project is enough.
+  if (body.status === 'canceled' && existing.projectId) {
+    await db.delete(projects).where(eq(projects.id, existing.projectId)).run();
+    patch.projectId = null;
+  }
+
   if (Object.keys(patch).length === 0) {
     return c.json({ success: true, data: (await hydrate([existing]))[0] });
   }
@@ -162,10 +170,15 @@ bookingsRoutes.patch('/:id', async (c) => {
 bookingsRoutes.delete('/:id', async (c) => {
   const me = c.get('user') as AuthUser;
   const id = c.req.param('id');
-  const [existing] = await db.select({ creatorId: bookings.creatorId, inviteeId: bookings.inviteeId }).from(bookings).where(eq(bookings.id, id)).limit(1).all();
+  const [existing] = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1).all();
   if (!existing) throw new HTTPException(404, { message: 'Booking not found' });
   if (existing.creatorId !== me.id) throw new HTTPException(403, { message: 'Only the creator can delete' });
   await db.delete(bookings).where(eq(bookings.id, id)).run();
+  // Clean up the auto-created shared project too so both users' sidebars drop
+  // the stale room. project_members cascades.
+  if (existing.projectId) {
+    await db.delete(projects).where(eq(projects.id, existing.projectId)).run();
+  }
   emitBookingUpdated([existing.creatorId, existing.inviteeId], 'deleted', id);
   return c.json({ success: true });
 });
