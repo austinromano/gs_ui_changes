@@ -4,6 +4,7 @@ import type { SamplePack } from '@ghost/types';
 import { api } from '../../lib/api';
 import { useAudioStore } from '../../stores/audioStore';
 import { ROOMS as COMMUNITY_ROOMS } from '../social/CommunityRooms';
+import { useCommunityStore } from '../../stores/communityStore';
 
 export type { SamplePack };
 
@@ -411,9 +412,7 @@ function ProjectListSidebar({
                 {COMMUNITY_ROOMS.map((room) => (
                   <button
                     key={room.id}
-                    onClick={() => {
-                      window.dispatchEvent(new CustomEvent('ghost-toast', { detail: { message: `Joining ${room.name}…` } }));
-                    }}
+                    onClick={() => { useCommunityStore.getState().openRoom(room.id); }}
                     className="w-full flex items-center gap-2 px-2 py-1.5 text-[13px] rounded-md transition-colors text-ghost-text-muted font-normal hover:bg-white/[0.04] hover:text-ghost-text-secondary"
                   >
                     <span

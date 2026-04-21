@@ -200,6 +200,17 @@ export const notifications = sqliteTable('notifications', {
   createdAt: timestamp('created_at').notNull(),
 });
 
+// Chat history for the hard-coded community rooms. roomId is a string key
+// (e.g. 'girl-producers'), not a foreign key — rooms are constants on the
+// client for now; adding a communities table is a later expansion.
+export const communityMessages = sqliteTable('community_messages', {
+  id: uuid().primaryKey(),
+  roomId: text('room_id').notNull(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  text: text('text').notNull(),
+  createdAt: timestamp('created_at').notNull(),
+});
+
 // Scheduled co-working sessions ("book a session with a friend").
 // scheduledAt is stored as an ISO-8601 UTC string; clients render in local TZ.
 export const bookings = sqliteTable('bookings', {

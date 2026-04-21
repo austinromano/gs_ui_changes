@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useCommunityStore } from '../../stores/communityStore';
 
 /**
  * Static community-rooms strip. Renders above the "drag & drop a sample"
@@ -62,6 +63,7 @@ function formatCount(n: number): string {
 }
 
 function RoomCard({ room }: { room: Room }) {
+  const openRoom = useCommunityStore((s) => s.openRoom);
   return (
     <motion.div
       whileHover={{ y: -2 }}
@@ -123,12 +125,7 @@ function RoomCard({ room }: { room: Room }) {
 
       <motion.button
         whileTap={{ scale: 0.96 }}
-        onClick={() => {
-          // TODO: wire up real community rooms (presence, chat, membership).
-          // For now, surface a friendly confirmation so the interaction feels live.
-          window.dispatchEvent(new CustomEvent('ghost-toast', { detail: { message: `Joining ${room.name}…` } }));
-          console.log('[community] join', room.id);
-        }}
+        onClick={() => { openRoom(room.id); }}
         className="w-full h-9 rounded-full text-[13px] font-bold text-white flex items-center justify-center gap-1.5 transition-all hover:brightness-110"
         style={{ background: 'linear-gradient(135deg, #7C3AED 0%, #4C1D95 100%)', boxShadow: '0 2px 10px rgba(124,58,237,0.35)' }}
       >

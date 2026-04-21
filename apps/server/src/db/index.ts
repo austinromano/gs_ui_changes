@@ -185,6 +185,13 @@ export async function initDatabase() {
       read INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS community_messages (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS bookings (
       id TEXT PRIMARY KEY,
       creator_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -267,6 +274,7 @@ export async function initDatabase() {
     `CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_bookings_creator ON bookings(creator_id, scheduled_at)`,
     `CREATE INDEX IF NOT EXISTS idx_bookings_invitee ON bookings(invitee_id, scheduled_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_community_messages_room ON community_messages(room_id, created_at)`,
   ];
   for (const idx of indexes) {
     try { await client.execute(idx); } catch (err) { console.warn('[db.index]', idx, '→', err); }

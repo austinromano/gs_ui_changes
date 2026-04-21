@@ -68,6 +68,9 @@ export interface ClientToServerEvents {
     x: number;
     y: number;
   }) => void;
+  'community:join': (data: { roomId: string }) => void;
+  'community:leave': (data: { roomId: string }) => void;
+  'community:send': (data: { roomId: string; text: string }) => void;
 }
 
 // ── Server → Client ──────────────────────────────────────────────────
@@ -139,6 +142,19 @@ export interface ServerToClientEvents {
     kind: 'created' | 'updated' | 'deleted';
     bookingId: string;
     booking?: unknown; // Full Booking object from API (with hydrated creator/invitee). Omitted on delete.
+  }) => void;
+  'community:presence': (data: {
+    roomId: string;
+    members: Array<{ userId: string; displayName: string; avatarUrl: string | null }>;
+  }) => void;
+  'community:message': (data: {
+    id: string;
+    roomId: string;
+    userId: string;
+    displayName: string;
+    avatarUrl: string | null;
+    text: string;
+    createdAt: string;
   }) => void;
   'cursor-move': (data: {
     userId: string;

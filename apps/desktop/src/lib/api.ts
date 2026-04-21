@@ -206,7 +206,27 @@ export const api = {
   updateBooking: (id: string, data: { status?: 'accepted' | 'declined' | 'canceled'; scheduledAt?: string; durationMin?: number; title?: string }) =>
     request<Booking>('PATCH', `/bookings/${id}`, data),
   deleteBooking: (id: string) => request<void>('DELETE', `/bookings/${id}`),
+
+  // Community rooms — chat history for a hard-coded room id
+  getCommunityHistory: (roomId: string) =>
+    request<CommunityMessage[]>('GET', `/communities/${roomId}/messages`),
 };
+
+export interface CommunityMessage {
+  id: string;
+  roomId: string;
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  text: string;
+  createdAt: string;
+}
+
+export interface CommunityMember {
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
 
 export interface Booking {
   id: string;

@@ -37,6 +37,8 @@ import CollaboratorsBar from './CollaboratorsBar';
 import WelcomeHero from '../onboarding/WelcomeHero';
 import FirstInviteNudge from '../onboarding/FirstInviteNudge';
 import MessagesView from '../messages/MessagesView';
+import CommunityRoomView from '../social/CommunityRoomView';
+import { useCommunityStore } from '../../stores/communityStore';
 
 const INVITE_NUDGE_FLAG = 'ghost_shown_invite_nudge';
 
@@ -75,6 +77,8 @@ export default function PluginLayout() {
   const samplePackState = useSamplePacks();
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const activeCommunityRoomId = useCommunityStore((s) => s.activeRoomId);
+  const closeCommunityRoom = useCommunityStore((s) => s.closeRoom);
 
   // If the currently-selected project disappears from the list (e.g. host
   // canceled the shared session while the invitee was inside it), step back
@@ -484,7 +488,9 @@ export default function PluginLayout() {
             )}
 
             <div className="flex-1 flex min-h-0 gap-2">
-              {selectedProjectId && currentProject ? (
+              {activeCommunityRoomId ? (
+                <CommunityRoomView onClose={closeCommunityRoom} />
+              ) : selectedProjectId && currentProject ? (
                 <>
                   <div className="flex-1 flex flex-col min-w-0">
                     <ProjectHeaderBar

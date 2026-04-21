@@ -20,6 +20,7 @@ import notificationRoutes from './routes/notifications.js';
 import socialRoutes from './routes/social.js';
 import dmRoutes from './routes/directMessages.js';
 import bookingsRoutes from './routes/bookings.js';
+import communityRoutes from './routes/communities.js';
 import { setupWebSocket } from './ws/index.js';
 import { initDatabase } from './db/index.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -76,6 +77,7 @@ app.route('/api/v1/notifications', notificationRoutes);
 app.route('/api/v1/social', socialRoutes);
 app.route('/api/v1/dm', dmRoutes);
 app.route('/api/v1/bookings', bookingsRoutes);
+app.route('/api/v1/communities', communityRoutes);
 
 // Serve the desktop app build
 import { serveStatic } from '@hono/node-server/serve-static';
