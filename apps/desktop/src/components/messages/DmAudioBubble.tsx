@@ -170,6 +170,37 @@ export default function DmAudioBubble({ fileId, fileName, isOwn, audioPath = '/d
           {fileName} {ready && `· ${fmt(duration * (isPlaying ? progress : 1) || duration)}`}
         </div>
       </div>
+      {ready && (
+        <button
+          title="Drag into DAW"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const url = `${API_BASE}${audioPath}/${fileId}${token ? `?token=${token}` : ''}`;
+            const safeName = fileName.match(/\.(wav|mp3|flac|aiff|ogg|m4a|aac)$/i) ? fileName : `${fileName}.wav`;
+            const ghostUrl = `ghost://drag-to-daw?url=${encodeURIComponent(url)}&fileName=${encodeURIComponent(safeName)}`;
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = ghostUrl;
+            document.body.appendChild(iframe);
+            setTimeout(() => iframe.remove(), 1000);
+          }}
+          className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center cursor-grab active:cursor-grabbing transition-colors"
+          style={{
+            background: 'rgba(0,0,0,0.15)',
+            color: isOwn ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.5)',
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="9" cy="5" r="1.2" fill="currentColor" />
+            <circle cx="15" cy="5" r="1.2" fill="currentColor" />
+            <circle cx="9" cy="12" r="1.2" fill="currentColor" />
+            <circle cx="15" cy="12" r="1.2" fill="currentColor" />
+            <circle cx="9" cy="19" r="1.2" fill="currentColor" />
+            <circle cx="15" cy="19" r="1.2" fill="currentColor" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
