@@ -11,12 +11,14 @@ export interface LoadedTrack {
   trimStart: number;   // seconds from buffer start
   trimEnd: number;     // seconds from buffer start (0 = use full length)
   startOffset: number; // seconds from project start (timeline position)
-  // Phase 2: tempo-aware playback metadata. When present, changing the
+  // Phase 2+: tempo-aware playback metadata. When present, changing the
   // project BPM re-stretches `buffer` from `originalBuffer` so the sample
   // stays locked to the project's grid.
   originalBuffer?: AudioBuffer; // unstretched source (kept so BPM changes can re-stretch)
   detectedBpm?: number;         // sample's native tempo as analysed at upload
   firstBeatOffset?: number;     // seconds from start of ORIGINAL buffer to first detected beat
+  beats?: number[];             // onset timestamps in ORIGINAL buffer time — drives transient-preserving stretch
+  character?: 'percussive' | 'tonal' | 'mixed' | 'ambient'; // drives algorithm selection
 }
 
 export interface UndoSnapshot {

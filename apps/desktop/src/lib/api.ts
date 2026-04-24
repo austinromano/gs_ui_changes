@@ -262,6 +262,8 @@ export interface SampleLibraryFolder {
   createdAt: string;
 }
 
+export type SampleCharacter = 'percussive' | 'tonal' | 'mixed' | 'ambient';
+
 export interface SampleLibraryFile {
   id: string;
   userId: string;
@@ -271,11 +273,13 @@ export interface SampleLibraryFile {
   fileSize: number;
   mimeType: string;
   peaks: string | null;
-  // BPM analysis — populated at upload time for WAVs, null otherwise.
+  // BPM + character analysis — populated at upload time for WAVs, null otherwise.
   detectedBpm: number | null;
   bpmConfidence: number | null;
   firstBeatOffset: number | null;
   beats: number[] | null;
+  sampleCharacter: SampleCharacter | null;
+  crestFactor: number | null;
   createdAt: string;
 }
 

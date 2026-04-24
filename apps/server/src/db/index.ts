@@ -225,6 +225,8 @@ export async function initDatabase() {
       bpm_confidence REAL,
       first_beat_offset REAL,
       beats_json TEXT,
+      sample_character TEXT,
+      crest_factor REAL,
       created_at TEXT NOT NULL
     );
   `);
@@ -247,10 +249,14 @@ export async function initDatabase() {
     `ALTER TABLE files ADD COLUMN bpm_confidence REAL`,
     `ALTER TABLE files ADD COLUMN first_beat_offset REAL`,
     `ALTER TABLE files ADD COLUMN beats_json TEXT`,
+    `ALTER TABLE files ADD COLUMN sample_character TEXT`,
+    `ALTER TABLE files ADD COLUMN crest_factor REAL`,
     `ALTER TABLE sample_library_files ADD COLUMN detected_bpm REAL`,
     `ALTER TABLE sample_library_files ADD COLUMN bpm_confidence REAL`,
     `ALTER TABLE sample_library_files ADD COLUMN first_beat_offset REAL`,
     `ALTER TABLE sample_library_files ADD COLUMN beats_json TEXT`,
+    `ALTER TABLE sample_library_files ADD COLUMN sample_character TEXT`,
+    `ALTER TABLE sample_library_files ADD COLUMN crest_factor REAL`,
   ];
   // ADD COLUMN migrations are idempotent by design — "duplicate column" is expected
   // on every boot after the first. Any other error is worth surfacing.

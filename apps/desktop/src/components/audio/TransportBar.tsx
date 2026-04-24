@@ -47,8 +47,10 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
           const nameBpm = detectBpmFromName(trackName);
           const detectedBpm = analysedBpm > 0 ? analysedBpm : nameBpm;
           const firstBeatOffset = typeof (track as any).firstBeatOffset === 'number' ? (track as any).firstBeatOffset : undefined;
+          const beats = Array.isArray((track as any).beats) ? (track as any).beats as number[] : undefined;
+          const character = (track as any).sampleCharacter as ('percussive' | 'tonal' | 'mixed' | 'ambient' | undefined);
           const buffer = audioBufferCache.get(track.fileId)!;
-          loadTrackFromBuffer(track.id, buffer, detectedBpm, detectedBpm, firstBeatOffset);
+          loadTrackFromBuffer(track.id, buffer, detectedBpm, detectedBpm, firstBeatOffset, beats, character);
           // Auto-set project tempo from first track with detected BPM.
           // Once the project has a BPM, later samples stretch to match instead.
           if (detectedBpm > 0 && onTempoChange && (!projectTempo || projectTempo === 120)) {

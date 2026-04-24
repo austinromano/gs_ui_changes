@@ -103,23 +103,35 @@ projectRoutes.get('/:id', async (c) => {
   // attach inline, so the client can render waveforms and time-stretch with
   // no extra round trips.
   const fileIds = Array.from(new Set(projectTracks.map((t) => t.fileId).filter((id): id is string => !!id)));
-  const fileMeta = new Map<string, { peaks: any; detectedBpm: number | null; bpmConfidence: number | null; firstBeatOffset: number | null }>();
+  const fileMeta = new Map<string, {
+    peaks: any; detectedBpm: number | null; bpmConfidence: number | null;
+    firstBeatOffset: number | null; beats: number[] | null;
+    sampleCharacter: string | null; crestFactor: number | null;
+  }>();
   if (fileIds.length > 0) {
     const rows = await db.select({
       id: files.id, peaks: files.peaks,
       detectedBpm: files.detectedBpm, bpmConfidence: files.bpmConfidence,
-      firstBeatOffset: files.firstBeatOffset,
+      firstBeatOffset: files.firstBeatOffset, beatsJson: files.beatsJson,
+      sampleCharacter: files.sampleCharacter, crestFactor: files.crestFactor,
     }).from(files).where(inArray(files.id, fileIds)).all();
     for (const r of rows) {
       let peaks = null;
       if (r.peaks) {
         try { peaks = JSON.parse(r.peaks); } catch { /* skip corrupt cached peaks */ }
       }
+      let beats: number[] | null = null;
+      if (r.beatsJson) {
+        try { beats = JSON.parse(r.beatsJson); } catch { /* skip corrupt beats */ }
+      }
       fileMeta.set(r.id, {
         peaks,
         detectedBpm: r.detectedBpm ?? null,
         bpmConfidence: r.bpmConfidence ?? null,
         firstBeatOffset: r.firstBeatOffset ?? null,
+        beats,
+        sampleCharacter: r.sampleCharacter ?? null,
+        crestFactor: r.crestFactor ?? null,
       });
     }
   }
@@ -131,6 +143,9 @@ projectRoutes.get('/:id', async (c) => {
       detectedBpm: meta?.detectedBpm ?? null,
       bpmConfidence: meta?.bpmConfidence ?? null,
       firstBeatOffset: meta?.firstBeatOffset ?? null,
+      beats: meta?.beats ?? null,
+      sampleCharacter: meta?.sampleCharacter ?? null,
+      crestFactor: meta?.crestFactor ?? null,
     };
   });
 

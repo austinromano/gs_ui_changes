@@ -135,6 +135,8 @@ sampleLibraryRoutes.post('/upload', async (c) => {
     bpmConfidence: analysis?.confidence ?? null,
     firstBeatOffset: analysis?.firstBeatOffset ?? null,
     beatsJson: analysis ? JSON.stringify(analysis.beats) : null,
+    sampleCharacter: analysis?.character ?? null,
+    crestFactor: analysis?.crestFactor ?? null,
     createdAt: now,
   }).run();
 
@@ -148,6 +150,8 @@ sampleLibraryRoutes.post('/upload', async (c) => {
       bpmConfidence: analysis?.confidence ?? null,
       firstBeatOffset: analysis?.firstBeatOffset ?? null,
       beats: analysis?.beats ?? null,
+      sampleCharacter: analysis?.character ?? null,
+      crestFactor: analysis?.crestFactor ?? null,
       createdAt: now,
     },
   }, 201);
@@ -262,6 +266,7 @@ sampleLibraryRoutes.post('/files/:id/copy-to-project/:projectId', async (c) => {
     // Carry the library's analysis across — saves re-running on copy.
     detectedBpm: src.detectedBpm, bpmConfidence: src.bpmConfidence,
     firstBeatOffset: src.firstBeatOffset, beatsJson: src.beatsJson,
+    sampleCharacter: src.sampleCharacter, crestFactor: src.crestFactor,
     createdAt: new Date().toISOString(),
   }).run();
 

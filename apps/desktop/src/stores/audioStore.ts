@@ -6,29 +6,28 @@ import { getCtx, getMaster, getAnalyser as getAnalyserNode, safeStop } from './a
 import { save as saveArrangement, load as loadArrangement } from './audio/arrangement';
 import { cloneBuffer, loopBufferToLength, splitBufferAt } from './audio/bufferOps';
 import type { LoadedTrack, UndoSnapshot } from './audio/types';
-import { timeStretch } from '../lib/stretch';
+import { adaptiveStretch, type SampleCharacter } from '../lib/stretch';
 
 /**
  * Pick the playable buffer for a sample with a detected BPM at a given
  * project BPM. Passes through (cheap, no DSP) when the two tempos agree or
- * when we lack the data to stretch. Bypasses stretching entirely when the
- * sample's detected confidence is sketchy — a bad detection is worse than
- * no stretch.
+ * when we lack the data to stretch. Cap at 2x either direction — WSOLA
+ * artifacts stack past that and the result sounds worse than unstretched.
+ * Character + beats metadata route us into transient-preserving stretch
+ * for percussive samples and larger-frame WSOLA for tonal ones.
  */
 function stretchForProject(
   originalBuffer: AudioBuffer,
   detectedBpm: number | undefined,
   projectBpm: number,
+  meta: { character?: SampleCharacter; beats?: number[] } = {},
 ): AudioBuffer {
   if (!detectedBpm || detectedBpm <= 0 || projectBpm <= 0) return originalBuffer;
-  // factor < 1 speeds up the sample (when the project is faster than the
-  // sample), factor > 1 slows it down. Cap at 2x either way to keep WSOLA
-  // artifacts within reason.
   const factor = detectedBpm / projectBpm;
   if (factor < 0.5 || factor > 2) return originalBuffer;
   if (Math.abs(factor - 1) < 0.005) return originalBuffer;
   try {
-    return timeStretch(originalBuffer, factor, getCtx());
+    return adaptiveStretch(originalBuffer, factor, getCtx(), meta);
   } catch {
     return originalBuffer;
   }
@@ -60,7 +59,15 @@ interface AudioState {
   loadError: string | null;
 
   loadTrack: (trackId: string, fileId: string, projectId: string, trackBpm?: number) => Promise<void>;
-  loadTrackFromBuffer: (trackId: string, buffer: AudioBuffer, trackBpm?: number, detectedBpm?: number, firstBeatOffset?: number) => void;
+  loadTrackFromBuffer: (
+    trackId: string,
+    buffer: AudioBuffer,
+    trackBpm?: number,
+    detectedBpm?: number,
+    firstBeatOffset?: number,
+    beats?: number[],
+    character?: SampleCharacter,
+  ) => void;
   unloadTrack: (trackId: string) => void;
   setProjectBpm: (bpm: number) => void;
   restretchAllTracks: () => void;
@@ -287,7 +294,7 @@ export const useAudioStore = create<AudioState>((set, get) => {
       }
     },
 
-    loadTrackFromBuffer: (trackId, buffer, trackBpm = 0, detectedBpm, firstBeatOffset) => {
+    loadTrackFromBuffer: (trackId, buffer, trackBpm = 0, detectedBpm, firstBeatOffset, beats, character) => {
       set((s) => {
         const m = new Map(s.loadedTracks);
         const existing = m.get(trackId);
@@ -300,7 +307,7 @@ export const useAudioStore = create<AudioState>((set, get) => {
         // quality fast).
         const projBpm = s.projectBpm;
         const playBuffer = detectedBpm
-          ? stretchForProject(buffer, detectedBpm, projBpm)
+          ? stretchForProject(buffer, detectedBpm, projBpm, { character, beats })
           : buffer;
 
         m.set(trackId, {
@@ -314,6 +321,8 @@ export const useAudioStore = create<AudioState>((set, get) => {
           originalBuffer: buffer,
           detectedBpm,
           firstBeatOffset,
+          beats,
+          character,
         });
         return { loadedTracks: m };
       });
@@ -338,7 +347,10 @@ export const useAudioStore = create<AudioState>((set, get) => {
       let changed = false;
       m.forEach((track, id) => {
         if (!track.originalBuffer || !track.detectedBpm) return;
-        const nextBuffer = stretchForProject(track.originalBuffer, track.detectedBpm, projectBpm);
+        const nextBuffer = stretchForProject(
+          track.originalBuffer, track.detectedBpm, projectBpm,
+          { character: track.character, beats: track.beats },
+        );
         if (nextBuffer !== track.buffer) {
           m.set(id, { ...track, buffer: nextBuffer, source: null, gainNode: null });
           changed = true;

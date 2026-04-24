@@ -114,6 +114,8 @@ export const files = sqliteTable('files', {
   bpmConfidence: real('bpm_confidence'),
   firstBeatOffset: real('first_beat_offset'),
   beatsJson: text('beats_json'),
+  sampleCharacter: text('sample_character'), // 'percussive' | 'tonal' | 'mixed' | 'ambient' | null
+  crestFactor: real('crest_factor'),
   createdAt: timestamp('created_at').notNull(),
 });
 
@@ -165,6 +167,8 @@ export const sampleLibraryFiles = sqliteTable('sample_library_files', {
   bpmConfidence: real('bpm_confidence'),
   firstBeatOffset: real('first_beat_offset'),
   beatsJson: text('beats_json'),
+  sampleCharacter: text('sample_character'),
+  crestFactor: real('crest_factor'),
   createdAt: timestamp('created_at').notNull(),
 });
 

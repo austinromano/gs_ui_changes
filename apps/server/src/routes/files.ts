@@ -100,6 +100,8 @@ fileRoutes.post('/upload', async (c) => {
     bpmConfidence: analysis?.confidence ?? null,
     firstBeatOffset: analysis?.firstBeatOffset ?? null,
     beatsJson: analysis ? JSON.stringify(analysis.beats) : null,
+    sampleCharacter: analysis?.character ?? null,
+    crestFactor: analysis?.crestFactor ?? null,
     createdAt: new Date().toISOString(),
   }).run();
 

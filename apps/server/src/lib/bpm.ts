@@ -17,12 +17,16 @@
 // typical files, and adds zero WASM/native dependencies to the server.
 // We can swap in essentia.js in Phase 2+ without changing the call sites.
 
+export type SampleCharacter = 'percussive' | 'tonal' | 'mixed' | 'ambient';
+
 export interface BpmAnalysis {
   bpm: number;              // detected tempo, clamped to [60, 200]
   confidence: number;       // normalised autocorrelation peak (0..1)
   firstBeatOffset: number;  // seconds from sample start to first detected beat
   beats: number[];          // beat timestamps in seconds
   durationSec: number;      // full sample duration (for the caller's convenience)
+  character: SampleCharacter; // drives client-side stretch algorithm selection
+  crestFactor: number;      // peak / rms ratio of the full sample
 }
 
 /** Decode a WAV buffer into mono Float32 samples. Returns null on unsupported formats. */
@@ -202,7 +206,47 @@ export function analyseBpm(samples: Float32Array, sampleRate: number, opts: { mi
   const beats: number[] = [];
   for (let t = firstBeatOffset; t < durationSec; t += beatInterval) beats.push(Number(t.toFixed(4)));
 
-  return { bpm: Number(bpm.toFixed(2)), confidence: Number(confidence.toFixed(3)), firstBeatOffset: Number(firstBeatOffset.toFixed(4)), beats, durationSec };
+  // 7. Character classification. Drives stretch algorithm selection:
+  //    - percussive → transient-pinned WSOLA (Ableton-Beats style)
+  //    - tonal     → larger-frame WSOLA for smoother sustains
+  //    - mixed     → default WSOLA
+  //    - ambient   → passthrough at low stretch ratios, wider WSOLA otherwise
+  // The signals: crest factor (peak/RMS) captures transient-heaviness; onset
+  // density captures rhythmic content; together they separate the four bins
+  // cleanly for typical producer content without needing a full classifier.
+  let peak = 0, sumSq = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const v = samples[i];
+    const abs = v < 0 ? -v : v;
+    if (abs > peak) peak = abs;
+    sumSq += v * v;
+  }
+  const rms = Math.sqrt(sumSq / Math.max(1, samples.length));
+  const crestFactor = rms > 1e-6 ? peak / rms : 1;
+  // Detected beats are a noisy density proxy; filter to local maxima well
+  // above threshold so we don't count sustain wobble.
+  let strongOnsets = 0;
+  const strongThresh = maxOnset * 0.4;
+  for (let i = 1; i < numFrames - 1; i++) {
+    if (onset[i] > strongThresh && onset[i] > onset[i - 1] && onset[i] > onset[i + 1]) strongOnsets++;
+  }
+  const onsetDensity = strongOnsets / durationSec;
+
+  let character: SampleCharacter;
+  if (onsetDensity < 0.3) character = 'ambient';
+  else if (crestFactor > 4.2 && onsetDensity > 2) character = 'percussive';
+  else if (crestFactor < 2.6 && onsetDensity < 1.5) character = 'tonal';
+  else character = 'mixed';
+
+  return {
+    bpm: Number(bpm.toFixed(2)),
+    confidence: Number(confidence.toFixed(3)),
+    firstBeatOffset: Number(firstBeatOffset.toFixed(4)),
+    beats,
+    durationSec,
+    character,
+    crestFactor: Number(crestFactor.toFixed(2)),
+  };
 }
 
 /** Convenience: run the whole analysis on a WAV buffer. Returns null for non-WAV / unsupported. */

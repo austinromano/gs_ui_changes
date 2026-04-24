@@ -297,6 +297,20 @@ function LibraryFileRow({ file, onDelete }: { file: SampleLibraryFile; onDelete:
         <circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
       </svg>
       <span className="truncate flex-1">{file.displayName}</span>
+      {file.sampleCharacter && (
+        <span
+          className="shrink-0 text-[8px] font-bold uppercase tracking-wide px-1 opacity-60"
+          style={{
+            color:
+              file.sampleCharacter === 'percussive' ? '#F59E0B' :
+              file.sampleCharacter === 'tonal' ? '#00B4D8' :
+              file.sampleCharacter === 'ambient' ? '#A855F7' : '#6b7280',
+          }}
+          title={`Character: ${file.sampleCharacter}${file.crestFactor ? ` — crest ${file.crestFactor.toFixed(1)}` : ''}`}
+        >
+          {file.sampleCharacter.slice(0, 3)}
+        </span>
+      )}
       {file.detectedBpm != null && (
         <span
           className="shrink-0 text-[9px] font-semibold text-ghost-green/70 tabular-nums px-1"
