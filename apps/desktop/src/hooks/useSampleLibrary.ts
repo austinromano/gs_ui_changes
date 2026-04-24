@@ -30,6 +30,7 @@ export function useSampleLibrary() {
       await api.deleteSampleLibraryFolder(id);
       setFolders((prev) => prev.filter((f) => f.id !== id));
       setFiles((prev) => prev.filter((f) => f.folderId !== id));
+      window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
     } catch (err) { devWarn('useSampleLibrary.deleteFolder', err); }
   }, []);
 
@@ -37,6 +38,7 @@ export function useSampleLibrary() {
     try {
       const row = await api.uploadSampleLibraryFile(file, folderId);
       setFiles((prev) => [...prev, row].sort((a, b) => a.displayName.localeCompare(b.displayName)));
+      window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
       return row;
     } catch (err) { devWarn('useSampleLibrary.uploadFile', err); return null; }
   }, []);
@@ -45,6 +47,7 @@ export function useSampleLibrary() {
     try {
       await api.deleteSampleLibraryFile(id);
       setFiles((prev) => prev.filter((f) => f.id !== id));
+      window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
     } catch (err) { devWarn('useSampleLibrary.deleteFile', err); }
   }, []);
 

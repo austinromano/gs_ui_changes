@@ -174,7 +174,7 @@ export const api = {
   removeSamplePackItem: (packId: string, itemId: string) =>
     request<void>('DELETE', `/sample-packs/${packId}/items/${itemId}`),
 
-  getStorageUsage: () => request<{ usedBytes: number; limitBytes: number }>('GET', '/storage'),
+  getStorageUsage: () => request<{ usedBytes: number; limitBytes: number; projectBytes: number; libraryBytes: number }>('GET', '/storage'),
 
   // Direct messages
   listDmConversations: () =>

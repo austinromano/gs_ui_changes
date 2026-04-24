@@ -24,6 +24,7 @@ export default function DropZone({ projectId, onFilesAdded }: { projectId: strin
           setStatus(`Adding ${name || 'sample'}…`);
           try {
             await api.copySampleLibraryFileToProject(id, projectId);
+            window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
             setStatus('Added from library');
             onFilesAdded();
           } catch (err: any) {
@@ -53,6 +54,7 @@ export default function DropZone({ projectId, onFilesAdded }: { projectId: strin
         const trackName = file.name.replace(/\.[^.]+$/, '');
         await api.addTrack(projectId, { name: trackName, type: 'audio', fileId, fileName: file.name });
       }
+      window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
       setStatus(`Added ${droppedFiles.length} track(s)`);
       onFilesAdded();
     } catch (err: any) {

@@ -25,6 +25,7 @@ export function ArrangementDropZone({ projectId, onFilesAdded, children }: { pro
         const { id } = JSON.parse(libPayload);
         if (id) {
           await api.copySampleLibraryFileToProject(id, projectId);
+          window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
           onFilesAdded();
           return;
         }
@@ -39,6 +40,7 @@ export function ArrangementDropZone({ projectId, onFilesAdded, children }: { pro
       const trackName = file.name.replace(/\.[^.]+$/, '');
       await api.addTrack(projectId, { name: trackName, type: 'fullmix', fileId, fileName: file.name } as any);
     }
+    window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
     onFilesAdded();
   };
 

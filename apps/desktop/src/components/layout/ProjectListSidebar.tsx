@@ -452,28 +452,53 @@ function ProjectListSidebar({
 }
 
 function StorageBar() {
-  const loadedTracks = useAudioStore((s) => s.loadedTracks);
-  const limit = 2 * 1024 * 1024 * 1024; // 2 GB
+  // Server-authoritative usage: sums the user's project files + sample
+  // library files in one query. Re-fetches whenever the client dispatches
+  // `ghost-storage-changed` (after an upload, delete, folder cascade, etc.),
+  // with a 30s safety poll as backstop for anything we forgot to dispatch.
+  const [used, setUsed] = useState(0);
+  const [limit, setLimit] = useState(2 * 1024 * 1024 * 1024);
+  const [projectBytes, setProjectBytes] = useState(0);
+  const [libraryBytes, setLibraryBytes] = useState(0);
 
-  // Calculate usage from loaded audio buffers
-  let used = 0;
-  loadedTracks.forEach((track) => {
-    if (track.buffer) {
-      // AudioBuffer size = channels * length * 4 bytes per float32 sample
-      used += track.buffer.numberOfChannels * track.buffer.length * 4;
-    }
-  });
+  useEffect(() => {
+    let cancelled = false;
+    const fetchUsage = async () => {
+      try {
+        const data = await api.getStorageUsage();
+        if (cancelled) return;
+        setUsed(data.usedBytes);
+        setLimit(data.limitBytes);
+        setProjectBytes(data.projectBytes || 0);
+        setLibraryBytes(data.libraryBytes || 0);
+      } catch { /* ignore transient errors */ }
+    };
+    fetchUsage();
+    const onChange = () => fetchUsage();
+    window.addEventListener('ghost-storage-changed', onChange);
+    const poll = setInterval(fetchUsage, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+      window.removeEventListener('ghost-storage-changed', onChange);
+    };
+  }, []);
 
   const usedGB = used / (1024 * 1024 * 1024);
   const limitGB = limit / (1024 * 1024 * 1024);
   const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 0;
   const isWarning = pct > 80;
   const isCritical = pct > 95;
+  const projectGB = projectBytes / (1024 * 1024 * 1024);
+  const libraryGB = libraryBytes / (1024 * 1024 * 1024);
 
   return (
     <div className="shrink-0 px-3 py-3 border-t border-white/[0.06]">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[12px] text-white/50 font-medium">
+        <span
+          className="text-[12px] text-white/50 font-medium"
+          title={`Projects: ${projectGB.toFixed(2)} GB\nSample Library: ${libraryGB.toFixed(2)} GB`}
+        >
           {usedGB.toFixed(2)} GB of {limitGB} GB used
         </span>
       </div>

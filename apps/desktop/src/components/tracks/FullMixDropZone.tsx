@@ -24,6 +24,7 @@ export default memo(function FullMixDropZone({ projectId, onFilesAdded, isBeat, 
           setStatus(`Adding ${name || 'sample'}…`);
           try {
             await api.copySampleLibraryFileToProject(id, projectId);
+            window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
             setStatus('Added from library');
             onFilesAdded();
           } catch (err: any) {
@@ -53,6 +54,7 @@ export default memo(function FullMixDropZone({ projectId, onFilesAdded, isBeat, 
         const trackName = file.name.replace(/\.[^.]+$/, '');
         await api.addTrack(projectId, { name: trackName, type: 'fullmix', fileId, fileName: file.name } as any);
       }
+      window.dispatchEvent(new CustomEvent('ghost-storage-changed'));
       setStatus(`Added ${droppedFiles.length} mix(es)`);
       onFilesAdded();
     } catch (err: any) {
