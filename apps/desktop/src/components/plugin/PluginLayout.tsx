@@ -92,7 +92,10 @@ export default function PluginLayout() {
     }
   }, [projects, selectedProjectId]);
 
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('ghost_sidebar_collapsed') !== '0');
+  useEffect(() => {
+    localStorage.setItem('ghost_sidebar_collapsed', sidebarCollapsed ? '1' : '0');
+  }, [sidebarCollapsed]);
   const [showSocial, setShowSocial] = useState(false);
   const [showMarketplace, setShowMarketplace] = useState(false);
   const [showMessages, setShowMessages] = useState(false);
