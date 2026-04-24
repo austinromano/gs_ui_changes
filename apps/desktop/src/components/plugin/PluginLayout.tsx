@@ -105,7 +105,10 @@ export default function PluginLayout() {
   }, [chatCollapsed]);
   const [videoGridHidden, setVideoGridHidden] = useState(true);
   const [shareStatus, setShareStatus] = useState('');
-  const [showAllBars, setShowAllBars] = useState(false);
+  const [showAllBars, setShowAllBars] = useState(() => localStorage.getItem('ghost_show_all_bars') !== '0');
+  useEffect(() => {
+    localStorage.setItem('ghost_show_all_bars', showAllBars ? '1' : '0');
+  }, [showAllBars]);
   const [vizModeIdx, setVizModeIdx] = useState(0);
   const vizMode = VIZ_MODES[vizModeIdx];
   const [isBeatView, setIsBeatView] = useState(false);
