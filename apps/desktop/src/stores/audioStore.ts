@@ -66,6 +66,15 @@ interface AudioState {
   toggleTrackSelection: (id: string) => void;
   addTrackToSelection: (id: string) => void;
   clearSelection: () => void;
+  // Live group drag — while a clip in a multi-selection is being dragged,
+  // every LaneClip in `groupDragIds` renders its position as
+  //   displayOffset = track.startOffset + groupDragDelta
+  // so the whole group visually moves as one. On pointerup the initiator
+  // commits the real offsets and these fields reset to empty/0.
+  groupDragIds: Set<string>;
+  groupDragDelta: number;
+  setGroupDrag: (ids: Iterable<string>, delta: number) => void;
+  endGroupDrag: () => void;
   // Grid snap subdivision — fraction of a bar. 1 = whole bar, 0.25 = quarter
   // note, 0.125 = eighth note, 0.0625 = sixteenth note. Drives every snap-
   // to-grid call across the arrangement (clip drag, paste, duplicate, trim).
@@ -275,6 +284,10 @@ export const useAudioStore = create<AudioState>((set, get) => {
       return { selectedTrackIds: next };
     }),
     clearSelection: () => set({ selectedTrackIds: new Set() }),
+    groupDragIds: new Set<string>(),
+    groupDragDelta: 0,
+    setGroupDrag: (ids, delta) => set({ groupDragIds: new Set(ids), groupDragDelta: delta }),
+    endGroupDrag: () => set({ groupDragIds: new Set(), groupDragDelta: 0 }),
     gridDivision: (() => {
       const raw = typeof window !== 'undefined' ? window.localStorage?.getItem('ghost_grid_division') : null;
       const n = raw ? parseFloat(raw) : NaN;

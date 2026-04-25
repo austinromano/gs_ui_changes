@@ -223,6 +223,10 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
   const setSelectedTrackIds = useAudioStore((s) => s.setSelectedTrackIds);
   const toggleTrackSelection = useAudioStore((s) => s.toggleTrackSelection);
   const addTrackToSelection = useAudioStore((s) => s.addTrackToSelection);
+  // Group drag — any selected clip renders its position shifted by the
+  // global groupDragDelta while a group drag is in progress.
+  const inGroupDrag = useAudioStore((s) => s.groupDragIds.has(track.id));
+  const groupDragDelta = useAudioStore((s) => s.groupDragDelta);
   const [dragOffset, setDragOffset] = useState<number | null>(null);
   // If a collaborator is currently dragging this clip, lock our own drag
   // and paint a coloured ghost at their live position.
@@ -232,7 +236,11 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
   // legacy side-by-side layout so clips don't collapse to zero width while the
   // audio is still decoding.
   const haveTime = clipDur > 0 && arrangementDur > 0;
-  const effectiveOffset = dragOffset !== null ? dragOffset : startOffset;
+  const effectiveOffset = dragOffset !== null
+    ? dragOffset
+    : inGroupDrag
+      ? Math.max(0, startOffset + groupDragDelta)
+      : startOffset;
   const leftPct = haveTime
     ? (effectiveOffset / arrangementDur) * 100
     : clipIndex * (100 / Math.max(1, totalClips));
@@ -334,13 +342,39 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
     const socket = getSocket();
     let lastEmit = 0;
 
+    // Group drag setup: if this clip is part of a multi-selection, capture
+    // every selected clip's initial offset so we can shift them together.
+    // Leftmost clip caps the negative delta so the group can't slide past 0.
+    const initialSel = useAudioStore.getState().selectedTrackIds;
+    const isGroupDrag = initialSel.has(track.id) && initialSel.size > 1;
+    const loadedTracksMap = useAudioStore.getState().loadedTracks;
+    const groupIds: string[] = isGroupDrag ? Array.from(initialSel) : [];
+    const initialGroupOffsets = new Map<string, number>();
+    let groupLeftmost = Infinity;
+    if (isGroupDrag) {
+      for (const id of groupIds) {
+        const l = loadedTracksMap.get(id);
+        const off = l?.startOffset ?? 0;
+        initialGroupOffsets.set(id, off);
+        if (off < groupLeftmost) groupLeftmost = off;
+      }
+    }
+
     const handleMove = (ev: PointerEvent) => {
       const deltaX = ev.clientX - startX;
       const deltaTime = (deltaX / laneWidthPx) * arrangementDur;
-      liveOffset = Math.max(0, initialOffset + deltaTime);
-      setDragOffset(liveOffset);
+      if (isGroupDrag) {
+        // Clamp so the leftmost clip stays at ≥ 0.
+        const clamped = Math.max(-groupLeftmost, deltaTime);
+        useAudioStore.getState().setGroupDrag(groupIds, clamped);
+        liveOffset = initialOffset + clamped;
+      } else {
+        liveOffset = Math.max(0, initialOffset + deltaTime);
+        setDragOffset(liveOffset);
+      }
       // Throttle live drag broadcast to ~30 Hz so collaborators see a smooth
-      // ghost move without flooding the socket.
+      // ghost move without flooding the socket. Broadcast only for the
+      // initiator clip during group drags — multi-clip ghosts would flood.
       const now = performance.now();
       if (socket && now - lastEmit > 33) {
         lastEmit = now;
@@ -348,18 +382,28 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
       }
     };
     const handleUp = () => {
-      // Snap the first DETECTED BEAT to the bar, not the sample's leading
-      // edge. For samples with lead-in silence this is the difference
-      // between "kinda lines up" and "locks into the groove."
-      const beatPos = liveOffset + beatAlignOffset;
       const grid = useAudioStore.getState().gridDivision;
+      // Snap based on the initiator clip's first detected beat → bar line.
+      // The same delta is then applied to every clip in the group so their
+      // relative spacing is preserved.
+      const beatPos = liveOffset + beatAlignOffset;
       const snappedBeatPos = snapToGrid(beatPos, bpm, grid, 'nearest');
-      const snapped = Math.max(0, snappedBeatPos - beatAlignOffset);
-      setDragOffset(null);
-      if (Math.abs(snapped - initialOffset) > 0.001) {
-        setTrackOffset(track.id, snapped);
-        window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
+      const snappedInitiator = Math.max(0, snappedBeatPos - beatAlignOffset);
+      if (isGroupDrag) {
+        const finalDelta = snappedInitiator - initialOffset;
+        for (const id of groupIds) {
+          const init = initialGroupOffsets.get(id) ?? 0;
+          const next = Math.max(0, init + finalDelta);
+          if (Math.abs(next - init) > 0.001) setTrackOffset(id, next);
+        }
+        useAudioStore.getState().endGroupDrag();
+      } else {
+        setDragOffset(null);
+        if (Math.abs(snappedInitiator - initialOffset) > 0.001) {
+          setTrackOffset(track.id, snappedInitiator);
+        }
       }
+      window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
       // Clear the remote ghost for every collaborator.
       if (socket) socket.emit('clip:drag', { projectId: selectedProjectId, trackId: track.id, liveOffset: null });
       window.removeEventListener('pointermove', handleMove);
