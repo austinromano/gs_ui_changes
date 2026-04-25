@@ -442,9 +442,13 @@ export const useAudioStore = create<AudioState>((set, get) => {
       if (get().isPlaying) return;
       const ctx = getCtx();
       if (ctx.state === 'suspended') ctx.resume();
-      pausedAt = 0;
-      startAllSources(0);
-      set({ isPlaying: true, currentTime: 0 });
+      // Resume from wherever the playhead is — either the last paused
+      // position, or the currentTime set by a seek (timeline click). Falls
+      // back to 0 only if neither is set.
+      const resumeAt = Math.max(0, pausedAt || get().currentTime || 0);
+      pausedAt = resumeAt;
+      startAllSources(resumeAt);
+      set({ isPlaying: true, currentTime: resumeAt });
       rafId = requestAnimationFrame(updatePosition);
     },
 
