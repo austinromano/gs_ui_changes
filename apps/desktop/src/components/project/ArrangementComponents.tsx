@@ -28,21 +28,26 @@ function laneHueForKey(key: string): number {
 }
 
 function TrackHeader({ name, hue, isSelected }: { name: string; hue: number; isSelected?: boolean }) {
-  const baseBg = `linear-gradient(180deg, hsl(${hue}, 28%, 22%) 0%, hsl(${hue}, 32%, 16%) 100%)`;
-  const accent = `hsl(${hue}, 75%, 55%)`;
+  // Solid block fill (FL Studio playlist style) — saturated colour, full
+  // lane height, name across the top, accent dot on the right.
+  const fill = `hsl(${hue}, 38%, 30%)`;
+  const accent = `hsl(${hue}, 80%, 60%)`;
   const cleanName = name.replace(/\.(wav|mp3|flac|aiff|ogg|m4a|aac)$/i, '').replace(/_/g, ' ');
   return (
     <div
       className="relative shrink-0 select-none flex items-center px-2 rounded-l-md overflow-hidden"
       style={{
         width: TRACK_HEADER_WIDTH,
-        background: baseBg,
+        height: '100%',
+        background: fill,
         borderRight: `2px solid ${accent}`,
-        boxShadow: isSelected ? `inset 0 0 0 1px ${accent}` : undefined,
+        boxShadow: isSelected ? `inset 0 0 0 1px ${accent}` : 'inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(0,0,0,0.25)',
       }}
       title={cleanName}
     >
-      <span className="text-[11px] font-semibold text-white/85 truncate flex-1">{cleanName}</span>
+      <span className="text-[11px] font-semibold text-white/95 truncate flex-1" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+        {cleanName}
+      </span>
       <span
         className="shrink-0 w-1.5 h-1.5 rounded-full"
         style={{ background: accent, boxShadow: `0 0 4px ${accent}` }}
@@ -610,6 +615,7 @@ function LaneRow({ laneKey, laneTracks, laneHeight, selectedProjectId, deleteTra
           e.preventDefault();
           dragControls.start(e);
         }}
+        className="h-full flex"
         style={{ cursor: 'grab' }}
       >
         <TrackHeader name={laneName} hue={hue} />
