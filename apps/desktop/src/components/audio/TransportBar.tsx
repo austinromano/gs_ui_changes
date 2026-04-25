@@ -525,7 +525,19 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
             <span className="text-[9px] font-mono text-white/60 ml-1">{formatTime(currentTime)}</span>
           </div>
 
-          <div className="absolute flex items-center gap-3 pointer-events-auto" style={{ left: '50%', transform: 'translateX(-50%) translateY(-30%)', filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.8))' }}>
+          {/* The transport button cluster sits ON TOP of the seek bar (the
+              FrequencyBar). Without stopPropagation here, clicking the play
+              button bubbles to the seek bar, which reads x ≈ center and
+              seeks to 50% of duration — so play "starts from the middle."
+              Catch the click + mousedown at this wrapper so none of the
+              inner buttons leak to the seek handler. */}
+          <div
+            className="absolute flex items-center gap-3 pointer-events-auto"
+            style={{ left: '50%', transform: 'translateX(-50%) translateY(-30%)', filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.8))' }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
             <button onClick={() => seekTo(0)} className="w-7 h-7 flex items-center justify-center rounded-full text-white/70 hover:text-white transition-colors" title="Skip Back">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="6" width="3" height="12" rx="1" /><polygon points="20,6 11,12 20,18" /></svg>
             </button>
