@@ -3,6 +3,9 @@ export interface LoadedTrack {
   buffer: AudioBuffer;          // buffer that actually plays — may be time-stretched
   source: AudioBufferSourceNode | null;
   gainNode: GainNode | null;
+  // Tapped off the gain node so the lane header's level meter can read
+  // per-track audio amplitude in real time. Lives only while playing.
+  analyser?: AnalyserNode | null;
   volume: number;
   muted: boolean;
   soloed: boolean;

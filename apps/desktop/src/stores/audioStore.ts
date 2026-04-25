@@ -171,6 +171,9 @@ export const useAudioStore = create<AudioState>((set, get) => {
 
     loadedTracks.forEach((track) => {
       safeStop(track.source);
+      // Disconnect any prior analyser so the OLD node doesn't keep showing
+      // a frozen reading after we restart playback.
+      if (track.analyser) { try { track.analyser.disconnect(); } catch { /* ignore */ } }
 
       const source = ctx.createBufferSource();
       source.buffer = track.buffer;
@@ -179,8 +182,16 @@ export const useAudioStore = create<AudioState>((set, get) => {
 
       const gain = ctx.createGain();
       gain.gain.value = track.muted ? 0 : track.volume;
+      // Per-track analyser feeds the lane header's level meter. Tapping
+      // off the gain node means the meter reflects the user's volume +
+      // mute state automatically.
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.6;
       source.connect(gain);
-      gain.connect(getMaster());
+      gain.connect(analyser);
+      analyser.connect(getMaster());
+      track.analyser = analyser;
 
       const trimStart = track.trimStart;
       const trimEnd = track.trimEnd > 0 ? track.trimEnd : track.buffer.duration;
@@ -214,6 +225,7 @@ export const useAudioStore = create<AudioState>((set, get) => {
         track.source = null;
         track.gainNode = null;
       }
+      if (track.analyser) { try { track.analyser.disconnect(); } catch { /* ignore */ } track.analyser = null; }
     });
   }
 

@@ -27,7 +27,74 @@ function laneHueForKey(key: string): number {
   return LANE_HUE_PALETTE[Math.abs(h) % LANE_HUE_PALETTE.length];
 }
 
-function TrackHeader({ name, hue, isSelected }: { name: string; hue: number; isSelected?: boolean }) {
+// Real-time level meter for a lane. Reads each track's AnalyserNode
+// (created in startAllSources) once per frame, takes the peak deviation
+// from the silent centre, and renders a vertical fill on the lane header.
+// Decays smoothly when audio drops (smoothingTimeConstant on the analyser
+// handles the actual audio envelope; we mostly just clamp + map to UI).
+function LaneLevelMeter({ trackIds }: { trackIds: string[] }) {
+  const isPlaying = useAudioStore((s) => s.isPlaying);
+  const fillRef = useRef<HTMLDivElement | null>(null);
+  const idsKey = trackIds.join(',');
+
+  useEffect(() => {
+    let raf = 0;
+    const buf = new Uint8Array(128);
+    let lastDisplayed = 0;
+    const tick = () => {
+      let peak = 0;
+      const tracks = useAudioStore.getState().loadedTracks;
+      for (const id of trackIds) {
+        const t = tracks.get(id);
+        if (t?.analyser) {
+          t.analyser.getByteTimeDomainData(buf);
+          let p = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const dev = Math.abs(buf[i] - 128);
+            if (dev > p) p = dev;
+          }
+          if (p > peak) peak = p;
+        }
+      }
+      // Map 0..128 → 0..1 and apply a mild attack/release so the meter
+      // tracks audio without flickering on every frame.
+      const target = peak / 128;
+      const next = target > lastDisplayed ? target : lastDisplayed * 0.85 + target * 0.15;
+      lastDisplayed = next;
+      const el = fillRef.current;
+      if (el) el.style.height = `${Math.min(100, next * 100)}%`;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [idsKey, isPlaying]);
+
+  return (
+    <div
+      className="relative shrink-0 rounded-sm overflow-hidden"
+      style={{
+        width: 4,
+        height: '70%',
+        background: 'rgba(0,0,0,0.45)',
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)',
+      }}
+    >
+      <div
+        ref={fillRef}
+        className="absolute bottom-0 left-0 right-0"
+        style={{
+          height: '0%',
+          // Classic VU gradient — green at the bottom for safe levels,
+          // amber in the middle, red near clipping.
+          background: 'linear-gradient(180deg, #ff4d4d 0%, #ffd24d 25%, #4dff8c 60%, #2bd16f 100%)',
+          transition: 'height 0.05s linear',
+        }}
+      />
+    </div>
+  );
+}
+
+function TrackHeader({ name, hue, isSelected, trackIds }: { name: string; hue: number; isSelected?: boolean; trackIds: string[] }) {
   // Solid block fill (FL Studio playlist style) — saturated colour, full
   // lane height, name across the top, accent dot on the right.
   const fill = `hsl(${hue}, 38%, 30%)`;
@@ -35,7 +102,7 @@ function TrackHeader({ name, hue, isSelected }: { name: string; hue: number; isS
   const cleanName = name.replace(/\.(wav|mp3|flac|aiff|ogg|m4a|aac)$/i, '').replace(/_/g, ' ');
   return (
     <div
-      className="relative shrink-0 select-none flex items-center px-2 rounded-l-md overflow-hidden"
+      className="relative shrink-0 select-none flex items-center gap-1.5 px-2 rounded-l-md overflow-hidden"
       style={{
         width: TRACK_HEADER_WIDTH,
         height: '100%',
@@ -52,6 +119,7 @@ function TrackHeader({ name, hue, isSelected }: { name: string; hue: number; isS
         className="shrink-0 w-1.5 h-1.5 rounded-full"
         style={{ background: accent, boxShadow: `0 0 4px ${accent}` }}
       />
+      <LaneLevelMeter trackIds={trackIds} />
     </div>
   );
 }
@@ -618,7 +686,7 @@ function LaneRow({ laneKey, laneTracks, laneHeight, selectedProjectId, deleteTra
         className="h-full flex"
         style={{ cursor: 'grab' }}
       >
-        <TrackHeader name={laneName} hue={hue} />
+        <TrackHeader name={laneName} hue={hue} trackIds={laneTracks.map((t: any) => t.id)} />
       </div>
       <div
         className="relative rounded-r-lg flex-1"
