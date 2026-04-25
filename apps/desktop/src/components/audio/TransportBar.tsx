@@ -1,11 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
-import { useAudioStore } from '../../stores/audioStore';
+import { useAudioStore, pendingTrackOffsets } from '../../stores/audioStore';
 import { useProjectStore } from '../../stores/projectStore';
-import { audioBufferCache, cacheBuffer, detectBpmFromName, formatTime } from '../../lib/audio';
+import { audioBufferCache, cacheBuffer, detectBpmFromName, formatTime, snapToBar } from '../../lib/audio';
 import { api } from '../../lib/api';
 import { getSocket } from '../../lib/socket';
 import { useCollabStore } from '../../stores/collabStore';
 import FrequencyBar, { type VizMode } from './FrequencyBar';
+
+// Module-level clipboard for the project's clip copy/paste keyboard
+// shortcuts. Lives outside React state because it's a pure side-channel
+// — Ctrl+C just stashes a track snapshot here, Ctrl+V reads it back.
+let clipClipboard: { fileId: string; name: string; type: string } | null = null;
 
 export default function TransportBar({ tracks, projectId, projectTempo, onTempoChange, trackZoom, onZoomChange, vizMode }: { tracks?: any[]; projectId?: string; projectTempo?: number; onTempoChange?: (bpm: number) => void; trackZoom?: 'full' | 'half'; onZoomChange?: (zoom: 'full' | 'half') => void; vizMode?: VizMode }) {
   const isPlaying = useAudioStore((s) => s.isPlaying);
@@ -296,6 +301,62 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
       window.removeEventListener('pagehide', flush);
       window.removeEventListener('beforeunload', flush);
     };
+  }, [projectId, tracks]);
+
+  // Ctrl+C / Ctrl+V on a selected clip: copy its track data, then paste at
+  // the playhead (snapped to the nearest bar). Escape clears selection.
+  // Skip the listener while the user is typing in any text field.
+  useEffect(() => {
+    if (!projectId) return;
+    const onKey = async (e: KeyboardEvent) => {
+      const tgt = e.target as HTMLElement | null;
+      const tag = tgt?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tgt?.isContentEditable) return;
+      if (e.key === 'Escape') {
+        useAudioStore.getState().setSelectedTrackId(null);
+        return;
+      }
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const k = e.key.toLowerCase();
+      if (k === 'c') {
+        const id = useAudioStore.getState().selectedTrackId;
+        if (!id || !tracks) return;
+        const t = tracks.find((x: any) => x.id === id);
+        if (!t || !t.fileId) return;
+        e.preventDefault();
+        clipClipboard = { fileId: t.fileId, name: t.name || 'Clip', type: t.type || 'audio' };
+      } else if (k === 'x') {
+        // Cut = copy + delete.
+        const id = useAudioStore.getState().selectedTrackId;
+        if (!id || !tracks) return;
+        const t = tracks.find((x: any) => x.id === id);
+        if (!t || !t.fileId) return;
+        e.preventDefault();
+        clipClipboard = { fileId: t.fileId, name: t.name || 'Clip', type: t.type || 'audio' };
+        useAudioStore.getState().removeTrack(id);
+        try { await api.deleteTrack(projectId, id); } catch { /* ignore */ }
+        useAudioStore.getState().setSelectedTrackId(null);
+        window.dispatchEvent(new CustomEvent('ghost-refresh-project'));
+      } else if (k === 'v') {
+        if (!clipClipboard) return;
+        e.preventDefault();
+        const projectBpm = useAudioStore.getState().projectBpm || 120;
+        const playhead = useAudioStore.getState().currentTime || 0;
+        const newOffset = Math.max(0, snapToBar(playhead, projectBpm, 'nearest'));
+        try {
+          const result = await api.addTrack(projectId, {
+            name: clipClipboard.name, type: clipClipboard.type as any,
+            fileId: clipClipboard.fileId, fileName: clipClipboard.name,
+          } as any);
+          if (result?.id) pendingTrackOffsets.set(result.id, newOffset);
+          window.dispatchEvent(new CustomEvent('ghost-refresh-project'));
+          window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
+        } catch { /* swallow — UI will surface via project refresh */ }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [projectId, tracks]);
 
   // Attach the collab store to the current project so remote transport

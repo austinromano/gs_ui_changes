@@ -57,6 +57,11 @@ interface AudioState {
   soloCurrentTime: number;
   soloDuration: number;
   loadError: string | null;
+  // Currently-selected clip id. Drives the selected ring on LaneClip and is
+  // what Ctrl+C reads when the user copies. Cleared on Escape or when the
+  // user clicks empty arrangement space.
+  selectedTrackId: string | null;
+  setSelectedTrackId: (id: string | null) => void;
 
   loadTrack: (trackId: string, fileId: string, projectId: string, trackBpm?: number) => Promise<void>;
   loadTrackFromBuffer: (
@@ -247,6 +252,8 @@ export const useAudioStore = create<AudioState>((set, get) => {
     soloCurrentTime: 0,
     soloDuration: 0,
     loadError: null,
+    selectedTrackId: null,
+    setSelectedTrackId: (id) => set({ selectedTrackId: id }),
 
     loadTrack: async (trackId, fileId, projectId, trackBpm = 0) => {
       if (audioBufferCache.has(fileId)) {

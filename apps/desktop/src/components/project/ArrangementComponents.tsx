@@ -218,6 +218,9 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
     return t.firstBeatOffset * factor;
   });
   const setTrackOffset = useAudioStore((s) => s.setTrackOffset);
+  // Selection — drives the green ring + what Ctrl+C copies.
+  const isSelected = useAudioStore((s) => s.selectedTrackId === track.id);
+  const setSelectedTrackId = useAudioStore((s) => s.setSelectedTrackId);
   const [dragOffset, setDragOffset] = useState<number | null>(null);
   // If a collaborator is currently dragging this clip, lock our own drag
   // and paint a coloured ghost at their live position.
@@ -277,6 +280,7 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
     if (remoteDrag) return;
     e.preventDefault();
     e.stopPropagation();
+    setSelectedTrackId(track.id);
     setMenu({ x: e.clientX, y: e.clientY });
   };
 
@@ -285,6 +289,8 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
     if (!haveTime) return;
     // Conflict guard: someone else is already dragging this clip.
     if (remoteDrag) return;
+    // Click selects this clip — what Ctrl+C will copy.
+    setSelectedTrackId(track.id);
     const clipEl = e.currentTarget;
     const laneEl = clipEl.parentElement;
     if (!laneEl) return;
@@ -367,9 +373,12 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
         left: `${leftPct}%`,
         width: `${clipWidth}%`,
         background: '#0A0412',
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: dragOffset !== null ? '0 0 0 1px rgba(168,85,247,0.6), 0 4px 16px rgba(124,58,237,0.3)' : undefined,
-        zIndex: dragOffset !== null ? 10 : undefined,
+        border: isSelected ? '1px solid rgba(0,255,200,0.7)' : '1px solid rgba(255,255,255,0.08)',
+        boxShadow:
+          dragOffset !== null ? '0 0 0 1px rgba(168,85,247,0.6), 0 4px 16px rgba(124,58,237,0.3)'
+          : isSelected ? '0 0 0 1px rgba(0,255,200,0.45), 0 0 12px rgba(0,255,200,0.25)'
+          : undefined,
+        zIndex: dragOffset !== null ? 10 : isSelected ? 5 : undefined,
         opacity: remoteDrag ? 0.5 : 1,
         userSelect: 'none',
       }}
