@@ -636,32 +636,36 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
         trackId={track.id}
         showPlayhead={true}
       />
-      {/* Track name + uploader avatar — only on the first clip in a lane */}
+      {/* Track name only — uploader avatar moved to the right-click context
+          menu so the clip stays clean. */}
       {clipIndex === 0 && (
         <div className="absolute left-2 top-1 z-10 pointer-events-none flex flex-col gap-1 items-start" style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.8))' }}>
           <p className="text-[10px] font-bold text-white/80 truncate max-w-[120px]">{displayName}</p>
-          <div
-            title={`Added by ${ownerName}`}
-            className="shrink-0 rounded-[10px] overflow-hidden ring-1 ring-black/60"
-            style={{
-              boxShadow: '0 2px 6px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08) inset',
-            }}
-          >
-            <Avatar name={ownerName} src={owner?.avatarUrl || null} size="sm" userId={track.ownerId || null} />
-          </div>
         </div>
       )}
     </div>
     {menu && (
       <div
         onMouseDown={(e) => e.stopPropagation()}
-        className="fixed z-50 min-w-[140px] rounded-md py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] backdrop-blur-md"
+        className="fixed z-50 min-w-[180px] rounded-md py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] backdrop-blur-md"
         style={{
           left: menu.x, top: menu.y,
           background: 'rgba(20, 12, 30, 0.96)',
           border: '1px solid rgba(255,255,255,0.08)',
         }}
       >
+        {/* Header: who added this clip. Avatar isn't a profile link inside
+            the menu either — pointer-events:none so the click flows up to
+            the menu's outside-click dismiss. */}
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/[0.06]">
+          <span className="pointer-events-none">
+            <Avatar name={ownerName} src={owner?.avatarUrl || null} size="xs" userId={null} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] uppercase tracking-wider text-white/40">Added by</div>
+            <div className="text-[12px] font-semibold text-white/85 truncate">{ownerName}</div>
+          </div>
+        </div>
         <button
           onClick={() => { setMenu(null); duplicateClip(); }}
           className="w-full px-3 py-1.5 text-[13px] text-left text-ghost-text-secondary hover:bg-white/[0.06] hover:text-white transition-colors flex items-center gap-2"
