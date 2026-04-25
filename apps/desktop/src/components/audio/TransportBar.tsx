@@ -10,7 +10,18 @@ import FrequencyBar, { type VizMode } from './FrequencyBar';
 // Module-level clipboard for the project's clip copy/paste keyboard
 // shortcuts. Lives outside React state because it's a pure side-channel
 // — Ctrl+C just stashes a track snapshot here, Ctrl+V reads it back.
-let clipClipboard: { fileId: string; name: string; type: string } | null = null;
+//
+// `nextOffset` is the position to drop the NEXT paste at. Initialised to
+// (source.startOffset + source.duration) so the first paste lands right
+// after the original; each Ctrl+V advances it by the source duration so
+// repeated pastes lay copies end-to-end without overlapping.
+let clipClipboard: {
+  fileId: string;
+  name: string;
+  type: string;
+  nextOffset: number;
+  duration: number;
+} | null = null;
 
 export default function TransportBar({ tracks, projectId, projectTempo, onTempoChange, trackZoom, onZoomChange, vizMode }: { tracks?: any[]; projectId?: string; projectTempo?: number; onTempoChange?: (bpm: number) => void; trackZoom?: 'full' | 'half'; onZoomChange?: (zoom: 'full' | 'half') => void; vizMode?: VizMode }) {
   const isPlaying = useAudioStore((s) => s.isPlaying);
@@ -319,21 +330,34 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const k = e.key.toLowerCase();
+      const stashClipboardFromTrack = (id: string) => {
+        const t = tracks?.find((x: any) => x.id === id);
+        if (!t || !t.fileId) return false;
+        const loaded = useAudioStore.getState().loadedTracks.get(id);
+        const duration = loaded?.buffer?.duration || 0;
+        const sourceOffset = loaded?.startOffset ?? 0;
+        clipClipboard = {
+          fileId: t.fileId,
+          name: t.name || 'Clip',
+          type: t.type || 'audio',
+          duration,
+          // First paste lands immediately after the source clip.
+          nextOffset: sourceOffset + duration,
+        };
+        return true;
+      };
+
       if (k === 'c') {
         const id = useAudioStore.getState().selectedTrackId;
         if (!id || !tracks) return;
-        const t = tracks.find((x: any) => x.id === id);
-        if (!t || !t.fileId) return;
+        if (!stashClipboardFromTrack(id)) return;
         e.preventDefault();
-        clipClipboard = { fileId: t.fileId, name: t.name || 'Clip', type: t.type || 'audio' };
       } else if (k === 'x') {
         // Cut = copy + delete.
         const id = useAudioStore.getState().selectedTrackId;
         if (!id || !tracks) return;
-        const t = tracks.find((x: any) => x.id === id);
-        if (!t || !t.fileId) return;
+        if (!stashClipboardFromTrack(id)) return;
         e.preventDefault();
-        clipClipboard = { fileId: t.fileId, name: t.name || 'Clip', type: t.type || 'audio' };
         useAudioStore.getState().removeTrack(id);
         try { await api.deleteTrack(projectId, id); } catch { /* ignore */ }
         useAudioStore.getState().setSelectedTrackId(null);
@@ -342,15 +366,19 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
         if (!clipClipboard) return;
         e.preventDefault();
         const projectBpm = useAudioStore.getState().projectBpm || 120;
-        const playhead = useAudioStore.getState().currentTime || 0;
         const grid = useAudioStore.getState().gridDivision;
-        const newOffset = Math.max(0, snapToGrid(playhead, projectBpm, grid, 'nearest'));
+        // Drop right after the source (or after the previous paste, since
+        // nextOffset auto-advances), snapped to the active grid.
+        const newOffset = Math.max(0, snapToGrid(clipClipboard.nextOffset, projectBpm, grid, 'nearest'));
         try {
           const result = await api.addTrack(projectId, {
             name: clipClipboard.name, type: clipClipboard.type as any,
             fileId: clipClipboard.fileId, fileName: clipClipboard.name,
           } as any);
           if (result?.id) pendingTrackOffsets.set(result.id, newOffset);
+          // Advance for the next paste so a series of Ctrl+V lays clips
+          // end-to-end instead of stacking at the same spot.
+          clipClipboard.nextOffset = newOffset + clipClipboard.duration;
           window.dispatchEvent(new CustomEvent('ghost-refresh-project'));
           window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
         } catch { /* swallow — UI will surface via project refresh */ }
