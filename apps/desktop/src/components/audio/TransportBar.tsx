@@ -81,7 +81,13 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
           const beats = Array.isArray((track as any).beats) ? (track as any).beats as number[] : undefined;
           const character = (track as any).sampleCharacter as ('percussive' | 'tonal' | 'mixed' | 'ambient' | undefined);
           const buffer = audioBufferCache.get(track.fileId)!;
-          loadTrackFromBuffer(track.id, buffer, detectedBpm, detectedBpm, firstBeatOffset, beats, character);
+          // trackBpm = 0 here so we don't clobber a duplicate's
+          // pendingTrackProps.bpm (the user's manual override on the source
+          // clip). The detected file BPM is passed separately as the 4th
+          // arg and lives on track.detectedBpm; track.bpm stays as a clean
+          // "0 = no override" default unless a duplicate / paste / restore
+          // populates it explicitly.
+          loadTrackFromBuffer(track.id, buffer, 0, detectedBpm, firstBeatOffset, beats, character);
           // Auto-set project tempo from first track with detected BPM.
           // Once the project has a BPM, later samples stretch to match instead.
           if (detectedBpm > 0 && onTempoChange && (!projectTempo || projectTempo === 120)) {
