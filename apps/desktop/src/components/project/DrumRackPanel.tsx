@@ -1,0 +1,290 @@
+import { useEffect, useRef, useState } from 'react';
+import { useDrumRack, type DrumRow } from '../../stores/drumRackStore';
+import { useAudioStore } from '../../stores/audioStore';
+import { audioBufferCache, getAudioData } from '../../lib/audio';
+import { api } from '../../lib/api';
+import { getCtx } from '../../stores/audio/graph';
+import { SAMPLE_LIBRARY_DRAG_MIME } from '../layout/SampleLibrarySection';
+
+// Drum-rack / step-sequencer panel. Lives at the bottom of the
+// arrangement. Accepts drops from:
+//   * the OS (audio file)
+//   * the Sample Library (custom MIME application/x-ghost-sample-library)
+//   * a project file id (text/plain "ghost-project-file:<id>", reserved
+//     for future drag handles in the arrangement)
+// Plays in sync with the project transport via the lookahead scheduler
+// in drumRackStore.
+
+export default function DrumRackPanel({ projectId }: { projectId: string }) {
+  const open = useDrumRack((s) => s.open);
+  const rows = useDrumRack((s) => s.rows);
+  const patternSteps = useDrumRack((s) => s.patternSteps);
+  const setOpen = useDrumRack((s) => s.setOpen);
+  const addEmptyRow = useDrumRack((s) => s.addEmptyRow);
+  const removeRow = useDrumRack((s) => s.removeRow);
+  const setRowBuffer = useDrumRack((s) => s.setRowBuffer);
+  const setRowVolume = useDrumRack((s) => s.setRowVolume);
+  const toggleRowMuted = useDrumRack((s) => s.toggleRowMuted);
+  const toggleStep = useDrumRack((s) => s.toggleStep);
+  const clearRow = useDrumRack((s) => s.clearRow);
+  const setPatternSteps = useDrumRack((s) => s.setPatternSteps);
+  const startScheduler = useDrumRack((s) => s.startScheduler);
+  const stopScheduler = useDrumRack((s) => s.stopScheduler);
+
+  // Start / stop the scheduler whenever the project transport flips. A
+  // single subscription at panel level is plenty — the scheduler itself
+  // keeps internal state and pulls latest rows / pattern from the store.
+  const isPlaying = useAudioStore((s) => s.isPlaying);
+  useEffect(() => {
+    if (isPlaying) startScheduler(projectId);
+    else stopScheduler();
+    return () => { stopScheduler(); };
+  }, [isPlaying, projectId, startScheduler, stopScheduler]);
+
+  // Load any source (OS file / library / project file) into the row.
+  const loadIntoRow = async (rowId: string, source: { kind: 'os'; file: File } | { kind: 'library'; id: string; name: string } | { kind: 'projectFile'; id: string; name: string }) => {
+    try {
+      let buffer: AudioBuffer | null = null;
+      let name = '';
+      let fileId: string | null = null;
+      if (source.kind === 'os') {
+        const arr = await source.file.arrayBuffer();
+        buffer = await getCtx().decodeAudioData(arr.slice(0));
+        name = source.file.name.replace(/\.[^.]+$/, '');
+      } else if (source.kind === 'library') {
+        const arr = await api.downloadSampleLibraryAudio(source.id);
+        buffer = await getCtx().decodeAudioData(arr.slice(0));
+        name = source.name.replace(/\.[^.]+$/, '');
+      } else {
+        // project file — reuse the cache + project download path
+        const cached = audioBufferCache.get(source.id);
+        if (cached) buffer = cached;
+        else {
+          const data = await getAudioData(projectId, source.id);
+          buffer = data.buffer;
+        }
+        name = source.name.replace(/\.[^.]+$/, '');
+        fileId = source.id;
+      }
+      if (buffer) setRowBuffer(rowId, name || 'Sample', buffer, fileId);
+    } catch (err) {
+      if (import.meta.env?.DEV) console.warn('[drumrack.loadIntoRow]', err);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="absolute right-12 top-1 z-30 px-2 h-7 flex items-center gap-1 rounded text-[10px] font-semibold uppercase tracking-wider bg-black/40 text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors"
+        title="Open drum rack"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="6" height="6" rx="1" /><rect x="15" y="3" width="6" height="6" rx="1" />
+          <rect x="3" y="15" width="6" height="6" rx="1" /><rect x="15" y="15" width="6" height="6" rx="1" />
+        </svg>
+        Drum Rack
+      </button>
+    );
+  }
+
+  return (
+    <div className="shrink-0 mt-2 rounded-2xl glass overflow-hidden flex flex-col" style={{ maxHeight: 320 }}>
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/[0.06]">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ghost-green">
+          <rect x="3" y="3" width="6" height="6" rx="1" /><rect x="15" y="3" width="6" height="6" rx="1" />
+          <rect x="3" y="15" width="6" height="6" rx="1" /><rect x="15" y="15" width="6" height="6" rx="1" />
+        </svg>
+        <span className="text-[12px] font-semibold text-white/85">Drum Rack</span>
+        <span className="text-[10px] text-white/40">— locked to project tempo</span>
+        <div className="ml-auto flex items-center gap-1 text-[10px]">
+          <button
+            onClick={() => setPatternSteps(16)}
+            className={`px-2 py-0.5 rounded ${patternSteps === 16 ? 'bg-ghost-green/20 text-ghost-green' : 'text-white/40 hover:bg-white/[0.06] hover:text-white'}`}
+          >
+            16
+          </button>
+          <button
+            onClick={() => setPatternSteps(32)}
+            className={`px-2 py-0.5 rounded ${patternSteps === 32 ? 'bg-ghost-green/20 text-ghost-green' : 'text-white/40 hover:bg-white/[0.06] hover:text-white'}`}
+          >
+            32
+          </button>
+          <button
+            onClick={() => addEmptyRow()}
+            className="px-2 py-0.5 rounded text-white/50 hover:bg-white/[0.06] hover:text-white"
+            title="Add row"
+          >
+            + Row
+          </button>
+          <button
+            onClick={() => setOpen(false)}
+            className="px-2 py-0.5 rounded text-white/40 hover:bg-white/[0.06] hover:text-white"
+            title="Close"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+
+      {/* Rows + grid */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {rows.map((row) => (
+          <DrumRowItem
+            key={row.id}
+            row={row}
+            patternSteps={patternSteps}
+            onDrop={(source) => loadIntoRow(row.id, source)}
+            onToggleStep={(idx) => toggleStep(row.id, idx)}
+            onSetVolume={(v) => setRowVolume(row.id, v)}
+            onToggleMuted={() => toggleRowMuted(row.id)}
+            onClear={() => clearRow(row.id)}
+            onRemove={() => removeRow(row.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Single row ───────────────────────────────────────────────────────────
+
+function DrumRowItem({ row, patternSteps, onDrop, onToggleStep, onSetVolume, onToggleMuted, onClear, onRemove }: {
+  row: DrumRow;
+  patternSteps: number;
+  onDrop: (source: { kind: 'os'; file: File } | { kind: 'library'; id: string; name: string } | { kind: 'projectFile'; id: string; name: string }) => void;
+  onToggleStep: (idx: number) => void;
+  onSetVolume: (v: number) => void;
+  onToggleMuted: () => void;
+  onClear: () => void;
+  onRemove: () => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    // Sample-library drag wins if both are present.
+    const lib = e.dataTransfer.getData(SAMPLE_LIBRARY_DRAG_MIME);
+    if (lib) {
+      try {
+        const { id, name } = JSON.parse(lib);
+        if (id) { onDrop({ kind: 'library', id, name: name || 'Sample' }); return; }
+      } catch { /* fall through */ }
+    }
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      const isAudio = file.type.startsWith('audio/') || /\.(wav|mp3|flac|aiff|ogg|m4a|aac)$/i.test(file.name);
+      if (isAudio) onDrop({ kind: 'os', file });
+    }
+  };
+
+  const handlePickFile = (file: File | null) => {
+    if (!file) return;
+    onDrop({ kind: 'os', file });
+  };
+
+  const hasSample = !!row.buffer;
+
+  return (
+    <div className="flex items-center gap-2 px-2 py-1 border-b border-white/[0.04]">
+      {/* Sample slot */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+        className={`shrink-0 w-[160px] h-7 flex items-center gap-1 px-2 rounded text-[11px] truncate cursor-pointer transition-colors ${
+          dragOver
+            ? 'bg-ghost-green/10 text-ghost-green ring-1 ring-ghost-green/40'
+            : hasSample
+              ? 'bg-white/[0.05] text-white/85 hover:bg-white/[0.08]'
+              : 'bg-black/20 text-white/35 italic hover:text-white/60 border border-dashed border-white/[0.08]'
+        }`}
+        title={hasSample ? row.name : 'Drop a sample here, or click to browse'}
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-ghost-green/70">
+          <path d="M9 18V5l12-2v13" />
+          <circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+        </svg>
+        <span className="truncate flex-1">{row.name || 'Empty'}</span>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*,.wav,.mp3,.flac,.aiff,.ogg,.m4a,.aac"
+          style={{ display: 'none' }}
+          onChange={(e) => { handlePickFile(e.target.files?.[0] ?? null); e.target.value = ''; }}
+        />
+      </div>
+
+      {/* Mute */}
+      <button
+        onClick={onToggleMuted}
+        className={`shrink-0 w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold transition-colors ${
+          row.muted ? 'bg-red-500/20 text-red-300' : 'text-white/35 hover:text-white hover:bg-white/[0.06]'
+        }`}
+        title={row.muted ? 'Unmute' : 'Mute'}
+      >
+        M
+      </button>
+
+      {/* Volume */}
+      <input
+        type="range"
+        min={0}
+        max={1.5}
+        step={0.01}
+        value={row.volume}
+        onChange={(e) => onSetVolume(parseFloat(e.target.value))}
+        className="shrink-0 w-[60px] accent-ghost-green"
+        title={`Volume ${Math.round(row.volume * 100)}%`}
+      />
+
+      {/* Step grid */}
+      <div className="flex-1 flex items-center gap-[2px]">
+        {Array.from({ length: patternSteps }).map((_, i) => {
+          const on = !!row.steps[i];
+          // Highlight the bar boundaries every 4 steps so the eye
+          // groups beats / 16ths visually.
+          const beatStart = i % 4 === 0;
+          return (
+            <button
+              key={i}
+              onClick={() => onToggleStep(i)}
+              className="flex-1 h-6 rounded-sm transition-colors"
+              style={{
+                background: on
+                  ? `hsl(165, 70%, 45%)`
+                  : beatStart ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
+                boxShadow: on ? 'inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.25)' : undefined,
+              }}
+              title={`Step ${i + 1}`}
+            />
+          );
+        })}
+      </div>
+
+      {/* Row controls */}
+      <button
+        onClick={onClear}
+        className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-white/35 hover:text-white hover:bg-white/[0.06]"
+        title="Clear row"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 6h18" />
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        </svg>
+      </button>
+      <button
+        onClick={onRemove}
+        className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-white/30 hover:text-red-400 hover:bg-red-500/10"
+        title="Delete row"
+      >
+        ×
+      </button>
+    </div>
+  );
+}

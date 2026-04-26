@@ -32,6 +32,7 @@ import TransportBar from '../audio/TransportBar';
 import { ArrangementDropZone, ArrangementScrollView, BarRuler, ArrangementPlayhead, DraggableTrackList } from '../project/ArrangementComponents';
 import ArrangementComments from '../project/ArrangementComments';
 import SampleEditorPanel from '../project/SampleEditorPanel';
+import DrumRackPanel from '../project/DrumRackPanel';
 import SamplePackContentView from './SamplePackContentView';
 import AddFriendPopover from './AddFriendPopover';
 import ProjectHeaderBar from './ProjectHeaderBar';
@@ -869,6 +870,7 @@ export default function PluginLayout() {
                             </ArrangementScrollView>
                           </ArrangementDropZone>
                           <SampleEditorPanel projectId={selectedProjectId!} />
+                          <DrumRackPanel projectId={selectedProjectId!} />
                         </div>
                       </div>
                     </div>
