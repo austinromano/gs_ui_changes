@@ -77,3 +77,12 @@ input[type="range"].track-volume::-webkit-slider-thumb:hover { background: #00FF
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .animate-popup { animation: fade-in-popup 150ms ease-out; }
+
+/* Drum-clip hit flash — overlays a bright wash on the clip block on
+   each scheduler step that fires any row. Re-keyed per step so React
+   remounts the element and the animation plays from frame 0. */
+@keyframes drum-clip-hit-flash {
+  0%   { opacity: 0.55; }
+  100% { opacity: 0; }
+}
+.animate-drum-clip-hit { animation: drum-clip-hit-flash 140ms ease-out forwards; }
