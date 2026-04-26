@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef, useCallback, memo } from 'react';
 import { motion } from 'framer-motion';
-import { useAudioStore } from '../../stores/audioStore';
+import { useAudioStore, getEffectiveDuration } from '../../stores/audioStore';
 import { rawDataCache, audioBufferCache, getAudioData, snapToGrid, getPeaks, peaksCache, type ServerPeaks } from '../../lib/audio';
 
 export default memo(function Waveform({
@@ -23,10 +23,14 @@ export default memo(function Waveform({
   const trimStart = useAudioStore((s) => trackId ? s.loadedTracks.get(trackId)?.trimStart ?? 0 : 0);
   const trimEnd = useAudioStore((s) => trackId ? s.loadedTracks.get(trackId)?.trimEnd ?? 0 : 0);
   const trackBuffer = useAudioStore((s) => trackId ? s.loadedTracks.get(trackId)?.buffer : undefined);
+  const trackPitch = useAudioStore((s) => trackId ? s.loadedTracks.get(trackId)?.pitch ?? 0 : 0);
   const projectBpm = useAudioStore((s) => s.projectBpm);
   const setTrackTrim = useAudioStore((s) => s.setTrackTrim);
 
   const bufferDuration = trackBuffer?.duration || 0;
+  // Effective (project-time) duration accounts for the pitch playbackRate
+  // so the inner playhead lines up with the visual clip width.
+  const effectiveDuration = trackBuffer ? getEffectiveDuration({ buffer: trackBuffer, pitch: trackPitch }) : 0;
   const effectiveTrimEnd = trimEnd > 0 ? trimEnd : bufferDuration;
   const bpm = projectBpm > 0 ? projectBpm : 120;
 
@@ -241,12 +245,14 @@ export default memo(function Waveform({
     if (soloPlayingTrackId === trackId && soloDuration > 0) {
       playheadPct = (soloCurrentTime / soloDuration) * 100;
       showLine = playheadPct >= 0 && playheadPct <= 100;
-    } else if (isPlaying && !soloPlayingTrackId && bufferDuration > 0) {
-      // Only show playhead when currentTime is within this clip's time range
+    } else if (isPlaying && !soloPlayingTrackId && effectiveDuration > 0) {
+      // Position the playhead against effective (project-time) duration —
+      // the same width the clip is rendered at — so it tracks the audio
+      // in real time even when the buffer was pre-stretched for pitch.
       const clipStart = startOffset;
-      const clipEnd = startOffset + bufferDuration;
+      const clipEnd = startOffset + effectiveDuration;
       if (currentTime >= clipStart && currentTime <= clipEnd) {
-        playheadPct = ((currentTime - clipStart) / bufferDuration) * 100;
+        playheadPct = ((currentTime - clipStart) / effectiveDuration) * 100;
         showLine = true;
       }
     }
