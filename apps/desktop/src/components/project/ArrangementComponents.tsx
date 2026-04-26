@@ -807,26 +807,30 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
           onDrag={(snap, deltaPx) => {
             if (snap.pxPerSourceSec <= 0) return;
             const deltaSourceSec = deltaPx / snap.pxPerSourceSec;
-            // Move trimStart AND startOffset together so every later sample
-            // stays anchored to the same timeline position. Clamp so we can
-            // never pull either past zero or past the right edge.
+            // Free target — what the edge would be without grid snapping.
             const minTrim = Math.max(0, snap.tStart - snap.tOff);
             const maxTrim = snap.tEnd - 0.01;
-            const nextTrim = Math.min(maxTrim, Math.max(minTrim, snap.tStart + deltaSourceSec));
-            const realDelta = nextTrim - snap.tStart;
+            let nextTrim = Math.min(maxTrim, Math.max(minTrim, snap.tStart + deltaSourceSec));
+            let nextOffset = Math.max(0, snap.tOff + (nextTrim - snap.tStart));
+
+            // Live snap the visible LEFT edge (= nextOffset) to the grid.
+            // grid = 0 means "free" — snapToGrid returns input unchanged.
+            const grid = useAudioStore.getState().gridDivision;
+            if (grid > 0) {
+              const snappedOffset = Math.max(0, snapToGrid(nextOffset, bpm, grid, 'nearest'));
+              const offsetDelta = snappedOffset - nextOffset;
+              // Move trimStart in lockstep so the audio anchored at the new
+              // edge is the same source sample that would have been there
+              // unsnapped. Source-sec = timeline-sec * playbackRate.
+              nextTrim = Math.min(maxTrim, Math.max(0, nextTrim + offsetDelta * snap.rate));
+              nextOffset = snappedOffset;
+            }
+
             const audioStore = useAudioStore.getState();
             audioStore.setTrackTrim(track.id, nextTrim, audioStore.loadedTracks.get(track.id)?.trimEnd ?? 0);
-            audioStore.setTrackOffset(track.id, Math.max(0, snap.tOff + realDelta));
+            audioStore.setTrackOffset(track.id, nextOffset);
           }}
           onDragEnd={() => {
-            const grid = useAudioStore.getState().gridDivision;
-            const t = useAudioStore.getState().loadedTracks.get(track.id);
-            if (t) {
-              const snappedOffset = Math.max(0, snapToGrid(t.startOffset, bpm, grid, 'nearest'));
-              if (Math.abs(snappedOffset - t.startOffset) > 0.001) {
-                useAudioStore.getState().setTrackOffset(track.id, snappedOffset);
-              }
-            }
             window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
           }}
         />
@@ -857,12 +861,23 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
           onDrag={(snap, deltaPx) => {
             if (snap.pxPerSourceSec <= 0) return;
             const deltaSourceSec = deltaPx / snap.pxPerSourceSec;
-            // Move trimEnd only. 0 in the data model means "use full buffer",
-            // so collapse to 0 when the user drags back to the natural end.
             const minEnd = snap.tStart + 0.01;
             const maxEnd = snap.bufDur;
-            const nextEnd = Math.min(maxEnd, Math.max(minEnd, snap.tEnd + deltaSourceSec));
+            let nextEnd = Math.min(maxEnd, Math.max(minEnd, snap.tEnd + deltaSourceSec));
+
+            // Live snap the visible RIGHT edge to the grid by working back
+            // from the snapped timeline position to a buffer-time trimEnd.
+            const grid = useAudioStore.getState().gridDivision;
+            if (grid > 0) {
+              const visualRightEdge = snap.tOff + (nextEnd - snap.tStart) / snap.rate;
+              const snappedRight = snapToGrid(visualRightEdge, bpm, grid, 'nearest');
+              nextEnd = snap.tStart + (snappedRight - snap.tOff) * snap.rate;
+              nextEnd = Math.min(maxEnd, Math.max(minEnd, nextEnd));
+            }
+
             const audioStore = useAudioStore.getState();
+            // 0 in the data model means "use full buffer" — collapse back
+            // to that when the user drags out to (or past) the natural end.
             audioStore.setTrackTrim(track.id, snap.tStart, nextEnd >= snap.bufDur ? 0 : nextEnd);
           }}
           onDragEnd={() => {
