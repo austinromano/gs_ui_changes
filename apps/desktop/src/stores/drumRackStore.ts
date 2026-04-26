@@ -150,7 +150,15 @@ export const useDrumRack = create<DrumRackState>((set, get) => ({
         for (let i = 0; i < Math.min(n, row.length); i++) next[i] = row[i];
         return next;
       });
-      return { ...c, patternSteps: n, steps };
+      // Auto-extend the clip so one full cycle of the new pattern fits.
+      // Matches FL Studio: pattern block defaults to pattern length.
+      // Shrinking the pattern (32 → 16) leaves the clip alone — user
+      // may have a longer clip that loops the pattern.
+      const bpm = useAudioStore.getState().projectBpm || 120;
+      const stepDur = 60 / bpm / 4;
+      const fullCycle = n * stepDur;
+      const lengthSec = Math.max(c.lengthSec, fullCycle);
+      return { ...c, patternSteps: n, steps, lengthSec };
     }),
   })),
 
