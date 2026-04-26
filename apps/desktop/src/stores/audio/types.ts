@@ -22,10 +22,13 @@ export interface LoadedTrack {
   firstBeatOffset?: number;     // seconds from start of ORIGINAL buffer to first detected beat
   beats?: number[];             // onset timestamps in ORIGINAL buffer time — drives transient-preserving stretch
   character?: 'percussive' | 'tonal' | 'mixed' | 'ambient'; // drives algorithm selection
-  // Warp on/off. true = stretch to project BPM and snap by first detected
-  // beat. false = play native and snap by clip leading edge — what 808s,
-  // hits, FX, and any sample with bad BPM detection actually want.
-  warp: boolean;
+  // Warp on/off. true (or undefined) = stretch to project BPM and snap by
+  // first detected beat. false = play native and snap by clip leading edge
+  // — what 808s, hits, FX, and any sample with bad BPM detection want.
+  // Optional so existing call sites that build LoadedTracks elsewhere
+  // (loadTrack, splitTrack, duplicateTrack) keep compiling without each
+  // having to opt in explicitly.
+  warp?: boolean;
 }
 
 export interface UndoSnapshot {
