@@ -401,12 +401,8 @@ function TrimHandle<S>({ edge, onDragStart, onDrag, onDragEnd }: {
 
     const snap = onDragStart();
     const startX = e.clientX;
-    // Diagnostic — confirms onPointerDown actually fires on the handle.
-    // Will remove once we've confirmed the drag works end-to-end.
-    console.log('[TrimHandle]', edge, 'pointerdown', { startX, snap });
 
     const onMove = (ev: PointerEvent) => {
-      console.log('[TrimHandle]', edge, 'pointermove', ev.clientX - startX);
       onDrag(snap, ev.clientX - startX);
     };
     const onUp = () => {
@@ -467,6 +463,11 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
   const trimStart = useAudioStore((s) => s.loadedTracks.get(track.id)?.trimStart ?? 0);
   const trimEnd = useAudioStore((s) => s.loadedTracks.get(track.id)?.trimEnd ?? 0);
   const bufferDuration = useAudioStore((s) => s.loadedTracks.get(track.id)?.buffer?.duration ?? 0);
+  // Ref to the rendered clip <div> so trim-handle drag-start can read the
+  // clip's actual rendered width — `laneWidth` prop is wrongly hardcoded
+  // to 100 at the call site, and TRACK_HEADER_WIDTH is 110, which makes
+  // any (laneWidth - TRACK_HEADER_WIDTH) math go negative.
+  const clipElRef = useRef<HTMLDivElement>(null);
   const playbackRate = useAudioStore((s) => {
     const t = s.loadedTracks.get(track.id);
     return Math.pow(2, ((t?.pitch || 0)) / 12);
@@ -748,6 +749,7 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
       </div>
     )}
     <div
+      ref={clipElRef}
       data-clip-id={track.id}
       onPointerDown={handlePointerDown}
       onContextMenu={handleContextMenu}
@@ -786,7 +788,10 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
             const tStart = t?.trimStart ?? 0;
             const tOff = t?.startOffset ?? 0;
             const rate = Math.pow(2, ((t?.pitch || 0)) / 12);
-            const visiblePx = (laneWidth - TRACK_HEADER_WIDTH) * (clipWidth / 100);
+            // Read the clip's actual rendered width straight off the DOM.
+            // The `laneWidth` prop is hardcoded to 100 upstream and isn't
+            // safe to use here.
+            const visiblePx = clipElRef.current?.getBoundingClientRect().width ?? 0;
             const visibleSourceSpan = tEnd - tStart;
             // Capture: pixel-per-source-second mapping is taken at drag start
             // and held for the whole drag so the cursor stays 1:1 with the
@@ -836,7 +841,10 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
             const tStart = t?.trimStart ?? 0;
             const tOff = t?.startOffset ?? 0;
             const rate = Math.pow(2, ((t?.pitch || 0)) / 12);
-            const visiblePx = (laneWidth - TRACK_HEADER_WIDTH) * (clipWidth / 100);
+            // Read the clip's actual rendered width straight off the DOM.
+            // The `laneWidth` prop is hardcoded to 100 upstream and isn't
+            // safe to use here.
+            const visiblePx = clipElRef.current?.getBoundingClientRect().width ?? 0;
             const visibleSourceSpan = tEnd - tStart;
             return {
               tStart, tOff, tEnd, rate,
