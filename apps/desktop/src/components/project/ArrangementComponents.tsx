@@ -756,11 +756,16 @@ function DrumRackLanes({ laneHeight }: { laneHeight: number }) {
     return ratio * arrangementDur;
   };
 
-  // Click empty space on the lane → create an 8-bar clip there.
+  // Snap a project-time to the nearest bar so clips always land on the
+  // grid. 1-bar resolution matches the ruler the user sees above.
+  const snapToBar = (t: number) => Math.round(t / barSec) * barSec;
+
+  // Click empty space on the lane → create an 8-bar clip there, snapped
+  // to the bar the click landed in.
   const handleLaneMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('[data-drum-clip]')) return;
-    const t = xToTime(e.clientX);
+    const t = Math.max(0, snapToBar(xToTime(e.clientX)));
     const id = createClipAt(t, defaultClipSec);
     selectClip(id);
     setOpen(true);
@@ -796,8 +801,8 @@ function DrumRackLanes({ laneHeight }: { laneHeight: number }) {
               hue={hue}
               selected={clip.id === selectedClipId}
               onSelect={() => { selectClip(clip.id); setOpen(true); }}
-              onMove={(newStart) => moveClip(clip.id, newStart)}
-              onResize={(newLen) => resizeClip(clip.id, newLen)}
+              onMove={(newStart) => moveClip(clip.id, Math.max(0, snapToBar(newStart)))}
+              onResize={(newLen) => resizeClip(clip.id, Math.max(barSec, snapToBar(newLen)))}
               onDelete={() => deleteClip(clip.id)}
               xToTime={xToTime}
             />
