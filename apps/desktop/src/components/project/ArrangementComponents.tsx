@@ -8,6 +8,7 @@ import { snapToGrid } from '../../lib/audio';
 import { getSocket } from '../../lib/socket';
 import Waveform from '../tracks/Waveform';
 import Avatar from '../common/Avatar';
+import { useDrumRack } from '../../stores/drumRackStore';
 import { SAMPLE_LIBRARY_DRAG_MIME } from '../layout/SampleLibrarySection';
 
 type Member = { userId: string; displayName: string; avatarUrl: string | null };
@@ -722,6 +723,75 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
   );
 }
 
+/* ── Drum-rack lanes ──
+   One lane per drum-rack row. Each lane shows mini-clips for every
+   active step in the row's pattern, repeating across the whole
+   arrangement length. Reads from drumRackStore directly; toggling a
+   step in the rack panel materialises / removes a mini-clip here in
+   real time without any server round trip. */
+function DrumRackLanes({ laneHeight }: { laneHeight: number }) {
+  const rows = useDrumRack((s) => s.rows);
+  const patternSteps = useDrumRack((s) => s.patternSteps);
+  const toggleStep = useDrumRack((s) => s.toggleStep);
+  const { bpm, arrangementDur } = useArrangement();
+  const stepDur = 60 / Math.max(1, bpm) / 4; // 16th note in seconds
+  const patternDur = stepDur * patternSteps;
+
+  if (rows.length === 0 || arrangementDur <= 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1">
+      {rows.map((row, idx) => {
+        const hue = (270 + idx * 35) % 360; // rotate through brand-ish hues
+        return (
+          <div key={row.id} className="flex" style={{ height: laneHeight }}>
+            <div data-track-header className="h-full flex shrink-0">
+              <TrackHeader name={`DR · ${row.name || `Row ${idx + 1}`}`} hue={hue} trackIds={[]} />
+            </div>
+            <div
+              className="relative rounded-r-lg flex-1"
+              style={{
+                background: 'rgba(10,4,18,0.4)',
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                opacity: row.muted ? 0.4 : 1,
+              }}
+            >
+              {/* Render every active step across every pattern repetition
+                  that fits inside the visible arrangement. */}
+              {Array.from({ length: Math.max(1, Math.ceil(arrangementDur / patternDur)) }).map((_, rep) => (
+                <div key={rep} className="absolute inset-0">
+                  {row.steps.map((on, stepIdx) => {
+                    if (!on) return null;
+                    const startTime = rep * patternDur + stepIdx * stepDur;
+                    if (startTime >= arrangementDur) return null;
+                    const leftPct = (startTime / arrangementDur) * 100;
+                    const widthPct = (stepDur / arrangementDur) * 100;
+                    return (
+                      <button
+                        key={stepIdx}
+                        onClick={(e) => { e.stopPropagation(); toggleStep(row.id, stepIdx); }}
+                        className="absolute top-1 bottom-1 rounded transition-transform hover:scale-y-105"
+                        style={{
+                          left: `${leftPct}%`,
+                          width: `${Math.max(0.4, widthPct - 0.1)}%`,
+                          background: `hsl(${hue}, 70%, 55%)`,
+                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25), 0 1px 4px rgba(0,0,0,0.4)',
+                          opacity: rep === 0 ? 1 : 0.65,
+                        }}
+                        title={`Step ${stepIdx + 1} — click to remove`}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Single lane row ── */
 // One reorderable lane. Drag is gated to the track header on the left so
 // pointer-down on a clip / empty clip space behaves exactly like before
@@ -1038,6 +1108,10 @@ export function DraggableTrackList({ tracks, selectedProjectId, deleteTrack, upd
       className="relative flex flex-col gap-1 mt-2"
       onPointerDown={handleMarqueeStart}
     >
+      {/* Drum-rack lanes — virtual lanes mirroring the rack's rows. They
+          read straight from drumRackStore so toggling a step in the rack
+          panel materialises a mini-clip in the arrangement instantly. */}
+      <DrumRackLanes laneHeight={laneHeight} />
       <Reorder.Group
         axis="y"
         values={orderedLaneKeys}
