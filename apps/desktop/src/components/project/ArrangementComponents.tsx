@@ -375,21 +375,105 @@ export function ArrangementPlayhead() {
   );
 }
 
+/* ── Edge trim handle for a clip ──
+ * Slim gold bar at the left or right edge of a selected clip. The parent
+ * captures the clip's trim/offset state at drag-start (`onDragStart`) and
+ * applies cumulative pixel deltas to that snapshot in `onDrag`, which keeps
+ * the math correct even when React hasn't re-rendered between pointer
+ * events. Pointer events are stopped here so the parent clip's move-drag
+ * doesn't fire on the same press.
+ */
+function TrimHandle<S>({ edge, onDragStart, onDrag, onDragEnd }: {
+  edge: 'start' | 'end';
+  onDragStart: () => S;
+  onDrag: (snap: S, deltaPx: number) => void;
+  onDragEnd: () => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+  const snapRef = useRef<S | null>(null);
+  const startXRef = useRef(0);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    snapRef.current = onDragStart();
+    startXRef.current = e.clientX;
+    setDragging(true);
+  }, [onDragStart]);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (ev: PointerEvent) => {
+      if (snapRef.current === null) return;
+      onDrag(snapRef.current, ev.clientX - startXRef.current);
+    };
+    const onUp = () => {
+      setDragging(false);
+      snapRef.current = null;
+      onDragEnd();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [dragging, onDrag, onDragEnd]);
+
+  const isStart = edge === 'start';
+  const edgeStyle: React.CSSProperties = isStart ? { left: 0 } : { right: 0 };
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      className="absolute top-0 bottom-0 z-20 cursor-ew-resize"
+      style={{ ...edgeStyle, width: 12 }}
+    >
+      <div
+        className="absolute top-[3px] bottom-[3px] pointer-events-none transition-[background,box-shadow,width] duration-100"
+        style={{
+          ...edgeStyle,
+          width: dragging ? 6 : 4,
+          background: dragging
+            ? 'linear-gradient(180deg, #FFE066 0%, #E6AC00 100%)'
+            : 'linear-gradient(180deg, rgba(245,197,24,0.9) 0%, rgba(212,160,23,0.9) 100%)',
+          borderRadius: isStart ? '3px 0 0 3px' : '0 3px 3px 0',
+          boxShadow: dragging
+            ? '0 0 12px rgba(245,197,24,0.7)'
+            : '0 0 4px rgba(245,197,24,0.35)',
+        }}
+      >
+        {/* Centered grip — two short horizontal dashes to signal "drag me". */}
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-[2px]">
+          <div style={{ width: 2, height: 1.5, background: 'rgba(0,0,0,0.55)', borderRadius: 1 }} />
+          <div style={{ width: 2, height: 1.5, background: 'rgba(0,0,0,0.55)', borderRadius: 1 }} />
+          <div style={{ width: 2, height: 1.5, background: 'rgba(0,0,0,0.55)', borderRadius: 1 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Single clip in a lane ── */
 function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth, clipIndex, totalClips, members }: {
   track: any; selectedProjectId: string; deleteTrack: any; trackZoom: 'full' | 'half'; laneWidth: number; clipIndex: number; totalClips: number; members: Member[];
 }) {
   const { arrangementDur, bpm } = useArrangement();
   const startOffset = useAudioStore((s) => s.loadedTracks.get(track.id)?.startOffset ?? 0);
-  // Effective duration = buffer.duration / playbackRate. Stays constant
-  // when pitch changes, so the clip's visual width on the timeline doesn't
-  // shrink/grow as the user adjusts the pitch slider.
-  const clipDur = useAudioStore((s) => {
+  const trimStart = useAudioStore((s) => s.loadedTracks.get(track.id)?.trimStart ?? 0);
+  const trimEnd = useAudioStore((s) => s.loadedTracks.get(track.id)?.trimEnd ?? 0);
+  const bufferDuration = useAudioStore((s) => s.loadedTracks.get(track.id)?.buffer?.duration ?? 0);
+  const playbackRate = useAudioStore((s) => {
     const t = s.loadedTracks.get(track.id);
-    if (!t?.buffer) return 0;
-    const rate = Math.pow(2, (t.pitch || 0) / 12);
-    return t.buffer.duration / Math.max(0.0001, rate);
+    return Math.pow(2, ((t?.pitch || 0)) / 12);
   });
+  const setTrackTrim = useAudioStore((s) => s.setTrackTrim);
+  // Effective trimmed end — 0 in the data model means "use full buffer".
+  const effectiveTrimEnd = trimEnd > 0 ? trimEnd : bufferDuration;
+  // Trimmed window length scaled by pitch — what the clip box should occupy
+  // on the timeline. Shrinks live as the user drags either trim handle.
+  const clipDur = bufferDuration > 0
+    ? Math.max(0, (effectiveTrimEnd - trimStart) / Math.max(0.0001, playbackRate))
+    : 0;
   // Beat-aligned snap: firstBeatOffset tells us where inside the sample the
   // first detected beat lives. We snap that position (not the sample's
   // leading edge) to bar lines so kicks-with-lead-in hit the downbeat.
@@ -658,7 +742,7 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
       data-clip-id={track.id}
       onPointerDown={handlePointerDown}
       onContextMenu={handleContextMenu}
-      className={`absolute top-1 bottom-1 group rounded-lg ${isSelected && !remoteDrag ? 'overflow-visible' : 'overflow-hidden'} ${haveTime && !remoteDrag ? 'cursor-grab active:cursor-grabbing' : ''} ${remoteDrag ? 'cursor-not-allowed' : ''}`}
+      className={`absolute top-1 bottom-1 group rounded-lg overflow-hidden ${haveTime && !remoteDrag ? 'cursor-grab active:cursor-grabbing' : ''} ${remoteDrag ? 'cursor-not-allowed' : ''}`}
       style={{
         left: `${leftPct}%`,
         width: `${clipWidth}%`,
@@ -680,8 +764,95 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
         projectId={selectedProjectId}
         trackId={track.id}
         showPlayhead={true}
-        showTrimHandles={isSelected && !remoteDrag}
+        viewStart={trimStart}
+        viewEnd={effectiveTrimEnd}
       />
+      {isSelected && !remoteDrag && bufferDuration > 0 && haveTime && (
+        <TrimHandle
+          edge="start"
+          onDragStart={() => {
+            const t = useAudioStore.getState().loadedTracks.get(track.id);
+            const bufDur = t?.buffer?.duration ?? 0;
+            const tEnd = (t?.trimEnd ?? 0) > 0 ? (t!.trimEnd) : bufDur;
+            const tStart = t?.trimStart ?? 0;
+            const tOff = t?.startOffset ?? 0;
+            const rate = Math.pow(2, ((t?.pitch || 0)) / 12);
+            const visiblePx = (laneWidth - TRACK_HEADER_WIDTH) * (clipWidth / 100);
+            const visibleSourceSpan = tEnd - tStart;
+            // Capture: pixel-per-source-second mapping is taken at drag start
+            // and held for the whole drag so the cursor stays 1:1 with the
+            // edge even though the clip box width is changing as we trim.
+            return {
+              tStart, tOff, tEnd, rate,
+              pxPerSourceSec: visibleSourceSpan > 0 && visiblePx > 0
+                ? visiblePx / visibleSourceSpan
+                : 0,
+              bufDur,
+            };
+          }}
+          onDrag={(snap, deltaPx) => {
+            if (snap.pxPerSourceSec <= 0) return;
+            const deltaSourceSec = deltaPx / snap.pxPerSourceSec;
+            // Move trimStart AND startOffset together so every later sample
+            // stays anchored to the same timeline position. Clamp so we can
+            // never pull either past zero or past the right edge.
+            const minTrim = Math.max(0, snap.tStart - snap.tOff);
+            const maxTrim = snap.tEnd - 0.01;
+            const nextTrim = Math.min(maxTrim, Math.max(minTrim, snap.tStart + deltaSourceSec));
+            const realDelta = nextTrim - snap.tStart;
+            const audioStore = useAudioStore.getState();
+            audioStore.setTrackTrim(track.id, nextTrim, audioStore.loadedTracks.get(track.id)?.trimEnd ?? 0);
+            audioStore.setTrackOffset(track.id, Math.max(0, snap.tOff + realDelta));
+          }}
+          onDragEnd={() => {
+            const grid = useAudioStore.getState().gridDivision;
+            const t = useAudioStore.getState().loadedTracks.get(track.id);
+            if (t) {
+              const snappedOffset = Math.max(0, snapToGrid(t.startOffset, bpm, grid, 'nearest'));
+              if (Math.abs(snappedOffset - t.startOffset) > 0.001) {
+                useAudioStore.getState().setTrackOffset(track.id, snappedOffset);
+              }
+            }
+            window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
+          }}
+        />
+      )}
+      {isSelected && !remoteDrag && bufferDuration > 0 && haveTime && (
+        <TrimHandle
+          edge="end"
+          onDragStart={() => {
+            const t = useAudioStore.getState().loadedTracks.get(track.id);
+            const bufDur = t?.buffer?.duration ?? 0;
+            const tEnd = (t?.trimEnd ?? 0) > 0 ? (t!.trimEnd) : bufDur;
+            const tStart = t?.trimStart ?? 0;
+            const tOff = t?.startOffset ?? 0;
+            const rate = Math.pow(2, ((t?.pitch || 0)) / 12);
+            const visiblePx = (laneWidth - TRACK_HEADER_WIDTH) * (clipWidth / 100);
+            const visibleSourceSpan = tEnd - tStart;
+            return {
+              tStart, tOff, tEnd, rate,
+              pxPerSourceSec: visibleSourceSpan > 0 && visiblePx > 0
+                ? visiblePx / visibleSourceSpan
+                : 0,
+              bufDur,
+            };
+          }}
+          onDrag={(snap, deltaPx) => {
+            if (snap.pxPerSourceSec <= 0) return;
+            const deltaSourceSec = deltaPx / snap.pxPerSourceSec;
+            // Move trimEnd only. 0 in the data model means "use full buffer",
+            // so collapse to 0 when the user drags back to the natural end.
+            const minEnd = snap.tStart + 0.01;
+            const maxEnd = snap.bufDur;
+            const nextEnd = Math.min(maxEnd, Math.max(minEnd, snap.tEnd + deltaSourceSec));
+            const audioStore = useAudioStore.getState();
+            audioStore.setTrackTrim(track.id, snap.tStart, nextEnd >= snap.bufDur ? 0 : nextEnd);
+          }}
+          onDragEnd={() => {
+            window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
+          }}
+        />
+      )}
       {/* Track name only — uploader avatar moved to the right-click context
           menu so the clip stays clean. */}
       {clipIndex === 0 && (

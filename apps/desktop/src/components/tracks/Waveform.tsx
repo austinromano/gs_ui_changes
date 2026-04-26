@@ -4,9 +4,14 @@ import { useAudioStore, getEffectiveDuration } from '../../stores/audioStore';
 import { rawDataCache, audioBufferCache, getAudioData, snapToGrid, getPeaks, peaksCache, type ServerPeaks } from '../../lib/audio';
 
 export default memo(function Waveform({
-  seed, height = 60, fileId, projectId, showPlayhead = false, trackId, showTrimHandles = false,
+  seed, height = 60, fileId, projectId, showPlayhead = false, trackId, viewStart, viewEnd,
 }: {
-  seed: string; height?: number; fileId?: string | null; projectId?: string; showPlayhead?: boolean; trackId?: string; showTrimHandles?: boolean;
+  seed: string; height?: number; fileId?: string | null; projectId?: string; showPlayhead?: boolean; trackId?: string;
+  // Optional crop into the source buffer. When set, only audio in
+  // [viewStart, viewEnd] seconds is rendered, stretched to fill the canvas
+  // and the playhead. Used by the arrangement clip so the visible waveform
+  // matches the clip box once it has been trimmed.
+  viewStart?: number; viewEnd?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -18,21 +23,23 @@ export default memo(function Waveform({
   );
 
   const [loadFailed, setLoadFailed] = useState(false);
-  const [draggingHandle, setDraggingHandle] = useState<'start' | 'end' | null>(null);
 
-  const trimStart = useAudioStore((s) => trackId ? s.loadedTracks.get(trackId)?.trimStart ?? 0 : 0);
-  const trimEnd = useAudioStore((s) => trackId ? s.loadedTracks.get(trackId)?.trimEnd ?? 0 : 0);
   const trackBuffer = useAudioStore((s) => trackId ? s.loadedTracks.get(trackId)?.buffer : undefined);
   const trackPitch = useAudioStore((s) => trackId ? s.loadedTracks.get(trackId)?.pitch ?? 0 : 0);
-  const projectBpm = useAudioStore((s) => s.projectBpm);
-  const setTrackTrim = useAudioStore((s) => s.setTrackTrim);
 
   const bufferDuration = trackBuffer?.duration || 0;
   // Effective (project-time) duration accounts for the pitch playbackRate
   // so the inner playhead lines up with the visual clip width.
-  const effectiveDuration = trackBuffer ? getEffectiveDuration({ buffer: trackBuffer, pitch: trackPitch }) : 0;
-  const effectiveTrimEnd = trimEnd > 0 ? trimEnd : bufferDuration;
-  const bpm = projectBpm > 0 ? projectBpm : 120;
+  const fullEffectiveDuration = trackBuffer ? getEffectiveDuration({ buffer: trackBuffer, pitch: trackPitch }) : 0;
+  // Resolve the visible audio window. Default = full buffer.
+  const resolvedViewStart = viewStart ?? 0;
+  const resolvedViewEnd = (viewEnd && viewEnd > 0) ? viewEnd : bufferDuration;
+  const viewSpan = Math.max(0, resolvedViewEnd - resolvedViewStart);
+  // Effective duration of just the cropped slice — drives the playhead so
+  // it tracks across only the visible portion of the buffer.
+  const effectiveDuration = bufferDuration > 0
+    ? fullEffectiveDuration * (viewSpan / bufferDuration)
+    : 0;
 
   // If no fileId but we have a buffer (e.g. duplicated/split track), derive waveform from buffer
   useEffect(() => {
@@ -117,16 +124,28 @@ export default memo(function Waveform({
 
     const mid = h / 2;
 
-    // Single pass over audioData: peaks, RMS, zero-crossing rate, crest factor.
+    // Resolve the audio sample range to render. When viewStart/viewEnd are
+    // set, only that slice fills the canvas — the trimmed clip box and the
+    // waveform stay visually aligned without needing a CSS clip-path.
+    const totalSamples = audioData.length;
+    const viewSampleStart = bufferDuration > 0
+      ? Math.max(0, Math.floor((resolvedViewStart / bufferDuration) * totalSamples))
+      : 0;
+    const viewSampleEnd = bufferDuration > 0
+      ? Math.min(totalSamples, Math.ceil((resolvedViewEnd / bufferDuration) * totalSamples))
+      : totalSamples;
+    const visibleSamples = Math.max(1, viewSampleEnd - viewSampleStart);
+
+    // Single pass over the visible slice: peaks, RMS, zero-crossing rate, crest factor.
     const peaks = new Float32Array(w);
     const rms = new Float32Array(w);
     const zcr = new Float32Array(w);
     const crest = new Float32Array(w);
     const onset = new Float32Array(w);
-    const samplesPerPixel = audioData.length / w;
+    const samplesPerPixel = visibleSamples / w;
     for (let x = 0; x < w; x++) {
-      const start = Math.floor(x * samplesPerPixel);
-      const end = Math.min(Math.floor((x + 1) * samplesPerPixel), audioData.length);
+      const start = viewSampleStart + Math.floor(x * samplesPerPixel);
+      const end = Math.min(viewSampleStart + Math.floor((x + 1) * samplesPerPixel), viewSampleEnd);
       let max = 0, sumSq = 0, zc = 0, prevSign = 0;
       for (let j = start; j < end; j++) {
         const v = audioData[j];
@@ -174,7 +193,7 @@ export default memo(function Waveform({
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.fillRect(0, mid - 0.5, w, 1);
-  }, [audioData, trackId, fileId, seed]);
+  }, [audioData, trackId, fileId, seed, bufferDuration, resolvedViewStart, resolvedViewEnd]);
 
   useEffect(() => {
     draw();
@@ -182,58 +201,6 @@ export default memo(function Waveform({
     if (containerRef.current) obs.observe(containerRef.current);
     return () => obs.disconnect();
   }, [draw]);
-
-  // Trim handle dragging. Uses pointer events (not mouse events) so
-  // stopPropagation actually prevents the parent clip's onPointerDown move-drag
-  // from firing — both events would otherwise fire on the same click.
-  const handlePointerDownOnHandle = useCallback((handle: 'start' | 'end') => (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDraggingHandle(handle);
-  }, []);
-
-  useEffect(() => {
-    if (!draggingHandle || !containerRef.current || !trackId || bufferDuration === 0) return;
-
-    const container = containerRef.current;
-
-    const onPointerMove = (e: PointerEvent) => {
-      const rect = container.getBoundingClientRect();
-      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const rawTime = ratio * bufferDuration;
-      const clamped = Math.max(0, Math.min(bufferDuration, rawTime));
-
-      if (draggingHandle === 'start') {
-        const maxStart = (trimEnd > 0 ? trimEnd : bufferDuration) - 0.01;
-        setTrackTrim(trackId, Math.min(clamped, maxStart), trimEnd);
-      } else {
-        const minEnd = trimStart + 0.01;
-        setTrackTrim(trackId, trimStart, Math.max(clamped, minEnd));
-      }
-    };
-
-    const onPointerUp = () => {
-      // Snap to nearest bar on release
-      if (trackId) {
-        const grid = useAudioStore.getState().gridDivision;
-        const snappedStart = snapToGrid(useAudioStore.getState().loadedTracks.get(trackId)?.trimStart ?? 0, bpm, grid, 'nearest');
-        const rawEnd = useAudioStore.getState().loadedTracks.get(trackId)?.trimEnd ?? 0;
-        const snappedEnd = rawEnd > 0 ? snapToGrid(rawEnd, bpm, grid, 'nearest') : 0;
-        setTrackTrim(trackId, Math.max(0, snappedStart), snappedEnd);
-        // Persist trim through arrangement save (same hook every other
-        // clip mutation uses) so it survives a reload and reaches the server.
-        window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
-      }
-      setDraggingHandle(null);
-    };
-
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [draggingHandle, trackId, bufferDuration, bpm, trimStart, trimEnd, setTrackTrim]);
 
   const currentTime = useAudioStore((s) => s.currentTime);
   const duration = useAudioStore((s) => s.duration);
@@ -263,17 +230,9 @@ export default memo(function Waveform({
     }
   }
 
-  const trimStartPct = bufferDuration > 0 ? (trimStart / bufferDuration) * 100 : 0;
-  const trimEndPct = bufferDuration > 0 ? (effectiveTrimEnd / bufferDuration) * 100 : 100;
-
   return (
-    <div ref={containerRef} className="flex-1 rounded relative" style={{ height, overflow: showTrimHandles ? 'visible' : 'hidden' }}>
-      <canvas ref={canvasRef} style={{
-        display: 'block',
-        clipPath: showTrimHandles && bufferDuration > 0 && (trimStart > 0 || (trimEnd > 0 && trimEnd < bufferDuration))
-          ? `inset(0 ${100 - trimEndPct}% 0 ${trimStartPct}%)`
-          : undefined,
-      }} />
+    <div ref={containerRef} className="flex-1 rounded relative overflow-hidden" style={{ height }}>
+      <canvas ref={canvasRef} style={{ display: 'block' }} />
       {!audioData && fileId && !loadFailed && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <motion.svg
@@ -325,58 +284,6 @@ export default memo(function Waveform({
           className="absolute top-0 bottom-0 w-[2px] pointer-events-none"
           style={{ left: `${playheadPct}%`, background: '#00FFC8', boxShadow: '0 0 6px rgba(0,255,200,0.6), 0 0 12px rgba(0,255,200,0.2)' }}
         />
-      )}
-      {showTrimHandles && bufferDuration > 0 && (
-        <>
-          {/* Left trim handle — gold tab with left chevron */}
-          <div
-            className="absolute top-0 bottom-0 cursor-col-resize z-20"
-            style={{ left: `calc(${trimStartPct}% - 18px)`, width: 20 }}
-            onPointerDown={handlePointerDownOnHandle('start')}
-          >
-            <div
-              className="absolute right-0 top-[4px] bottom-[4px] flex items-center justify-center transition-shadow"
-              style={{
-                width: 18,
-                background: draggingHandle === 'start'
-                  ? 'linear-gradient(180deg, #FFD700 0%, #E6AC00 100%)'
-                  : 'linear-gradient(180deg, #F5C518 0%, #D4A017 100%)',
-                borderRadius: '6px 0 0 6px',
-                boxShadow: draggingHandle === 'start'
-                  ? '0 0 12px rgba(245,197,24,0.6), -2px 0 8px rgba(0,0,0,0.4)'
-                  : '-2px 0 6px rgba(0,0,0,0.3)',
-              }}
-            >
-              <svg width="10" height="16" viewBox="0 0 10 16" fill="none">
-                <path d="M7 3L3 8L7 13" stroke="#1a1a1a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
-          </div>
-          {/* Right trim handle — gold tab with right chevron */}
-          <div
-            className="absolute top-0 bottom-0 cursor-col-resize z-20"
-            style={{ left: `calc(${trimEndPct}% - 2px)`, width: 20 }}
-            onPointerDown={handlePointerDownOnHandle('end')}
-          >
-            <div
-              className="absolute left-0 top-[4px] bottom-[4px] flex items-center justify-center transition-shadow"
-              style={{
-                width: 18,
-                background: draggingHandle === 'end'
-                  ? 'linear-gradient(180deg, #FFD700 0%, #E6AC00 100%)'
-                  : 'linear-gradient(180deg, #F5C518 0%, #D4A017 100%)',
-                borderRadius: '0 6px 6px 0',
-                boxShadow: draggingHandle === 'end'
-                  ? '0 0 12px rgba(245,197,24,0.6), 2px 0 8px rgba(0,0,0,0.4)'
-                  : '2px 0 6px rgba(0,0,0,0.3)',
-              }}
-            >
-              <svg width="10" height="16" viewBox="0 0 10 16" fill="none">
-                <path d="M3 3L7 8L3 13" stroke="#1a1a1a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
-          </div>
-        </>
       )}
     </div>
   );
