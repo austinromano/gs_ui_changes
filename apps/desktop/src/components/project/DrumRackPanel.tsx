@@ -84,20 +84,31 @@ export default function DrumRackPanel({ projectId }: { projectId: string }) {
   };
 
   // Load any source (OS file / library / project file) into the row.
+  // For multiplayer: every sample needs a project-scoped fileId so peers
+  // can fetch the same audio. OS drops and library drops therefore get
+  // uploaded to the project here; project-file drops already have one.
   const loadIntoRow = async (rowId: string, source: { kind: 'os'; file: File } | { kind: 'library'; id: string; name: string } | { kind: 'projectFile'; id: string; name: string }) => {
     try {
       let buffer: AudioBuffer | null = null;
       let name = '';
       let fileId: string | null = null;
+      let fileToUpload: File | null = null;
+
       if (source.kind === 'os') {
         const arr = await source.file.arrayBuffer();
         buffer = await getCtx().decodeAudioData(arr.slice(0));
         name = source.file.name.replace(/\.[^.]+$/, '');
+        fileToUpload = source.file;
       } else if (source.kind === 'library') {
         const arr = await api.downloadSampleLibraryAudio(source.id);
         buffer = await getCtx().decodeAudioData(arr.slice(0));
         name = source.name.replace(/\.[^.]+$/, '');
+        // Re-wrap as a project file so collaborators can fetch by fileId.
+        const ext = source.name.match(/\.[a-z0-9]+$/i)?.[0] || '.wav';
+        const fileName = source.name.endsWith(ext) ? source.name : `${name}${ext}`;
+        fileToUpload = new File([arr], fileName, { type: 'audio/wav' });
       } else {
+        // project file — already shared via the project's audio storage.
         const cached = audioBufferCache.get(source.id);
         if (cached) buffer = cached;
         else {
@@ -107,6 +118,19 @@ export default function DrumRackPanel({ projectId }: { projectId: string }) {
         name = source.name.replace(/\.[^.]+$/, '');
         fileId = source.id;
       }
+
+      // Push OS / library samples into project storage so peers can fetch.
+      if (fileToUpload && !fileId) {
+        try {
+          const result = await api.uploadFile(projectId, fileToUpload);
+          fileId = result.fileId;
+          if (buffer && fileId) audioBufferCache.set(fileId, buffer);
+        } catch (err) {
+          if (import.meta.env?.DEV) console.warn('[drumrack.uploadSample]', err);
+          // Fall through with fileId=null — sample stays local-only.
+        }
+      }
+
       if (buffer) setRowBuffer(rowId, name || 'Sample', buffer, fileId);
     } catch (err) {
       if (import.meta.env?.DEV) console.warn('[drumrack.loadIntoRow]', err);
