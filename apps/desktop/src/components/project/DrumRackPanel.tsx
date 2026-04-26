@@ -7,18 +7,20 @@ import { getCtx } from '../../stores/audio/graph';
 import { SAMPLE_LIBRARY_DRAG_MIME } from '../layout/SampleLibrarySection';
 
 // Drum-rack / step-sequencer panel. Lives at the bottom of the
-// arrangement. Accepts drops from:
-//   * the OS (audio file)
-//   * the Sample Library (custom MIME application/x-ghost-sample-library)
-//   * a project file id (text/plain "ghost-project-file:<id>", reserved
-//     for future drag handles in the arrangement)
-// Plays in sync with the project transport via the lookahead scheduler
-// in drumRackStore.
+// arrangement.
+//
+// Layout:
+//   - Rows (shared sample slots) sit at the top — kick / snare / hat
+//     are global to the whole rack.
+//   - The step grid below shows the SELECTED clip's pattern. Click a
+//     clip in the timeline to edit it; click "+ Clip" to add a new one
+//     at the playhead. No clip selected = empty state.
 
 export default function DrumRackPanel({ projectId }: { projectId: string }) {
   const open = useDrumRack((s) => s.open);
   const rows = useDrumRack((s) => s.rows);
-  const patternSteps = useDrumRack((s) => s.patternSteps);
+  const clips = useDrumRack((s) => s.clips);
+  const selectedClipId = useDrumRack((s) => s.selectedClipId);
   const setOpen = useDrumRack((s) => s.setOpen);
   const addEmptyRow = useDrumRack((s) => s.addEmptyRow);
   const removeRow = useDrumRack((s) => s.removeRow);
@@ -26,20 +28,35 @@ export default function DrumRackPanel({ projectId }: { projectId: string }) {
   const setRowVolume = useDrumRack((s) => s.setRowVolume);
   const toggleRowMuted = useDrumRack((s) => s.toggleRowMuted);
   const toggleStep = useDrumRack((s) => s.toggleStep);
-  const clearRow = useDrumRack((s) => s.clearRow);
+  const clearClip = useDrumRack((s) => s.clearClip);
   const setPatternSteps = useDrumRack((s) => s.setPatternSteps);
+  const createClipAt = useDrumRack((s) => s.createClipAt);
+  const selectClip = useDrumRack((s) => s.selectClip);
   const startScheduler = useDrumRack((s) => s.startScheduler);
   const stopScheduler = useDrumRack((s) => s.stopScheduler);
 
-  // Start / stop the scheduler whenever the project transport flips. A
-  // single subscription at panel level is plenty — the scheduler itself
-  // keeps internal state and pulls latest rows / pattern from the store.
+  // Start / stop the scheduler whenever the project transport flips.
   const isPlaying = useAudioStore((s) => s.isPlaying);
   useEffect(() => {
     if (isPlaying) startScheduler(projectId);
     else stopScheduler();
     return () => { stopScheduler(); };
   }, [isPlaying, projectId, startScheduler, stopScheduler]);
+
+  const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
+  const patternSteps = selectedClip?.patternSteps ?? 16;
+
+  // Default clip length = 1 bar at the current project BPM (16 steps fit
+  // exactly when patternSteps=16). User can resize on the timeline.
+  const projectBpm = useAudioStore((s) => s.projectBpm);
+  const bpm = projectBpm > 0 ? projectBpm : 120;
+  const barSec = 240 / bpm;
+
+  const handleAddClip = () => {
+    const playhead = useAudioStore.getState().currentTime || 0;
+    const id = createClipAt(playhead, barSec);
+    selectClip(id);
+  };
 
   // Load any source (OS file / library / project file) into the row.
   const loadIntoRow = async (rowId: string, source: { kind: 'os'; file: File } | { kind: 'library'; id: string; name: string } | { kind: 'projectFile'; id: string; name: string }) => {
@@ -56,7 +73,6 @@ export default function DrumRackPanel({ projectId }: { projectId: string }) {
         buffer = await getCtx().decodeAudioData(arr.slice(0));
         name = source.name.replace(/\.[^.]+$/, '');
       } else {
-        // project file — reuse the cache + project download path
         const cached = audioBufferCache.get(source.id);
         if (cached) buffer = cached;
         else {
@@ -89,7 +105,7 @@ export default function DrumRackPanel({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="shrink-0 mt-2 rounded-2xl glass overflow-hidden flex flex-col" style={{ maxHeight: 320 }}>
+    <div className="shrink-0 mt-2 rounded-2xl glass overflow-hidden flex flex-col" style={{ maxHeight: 360 }}>
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/[0.06]">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ghost-green">
@@ -97,20 +113,42 @@ export default function DrumRackPanel({ projectId }: { projectId: string }) {
           <rect x="3" y="15" width="6" height="6" rx="1" /><rect x="15" y="15" width="6" height="6" rx="1" />
         </svg>
         <span className="text-[12px] font-semibold text-white/85">Drum Rack</span>
-        <span className="text-[10px] text-white/40">— locked to project tempo</span>
+        <span className="text-[10px] text-white/40">
+          {selectedClip
+            ? `— editing clip @ ${selectedClip.startSec.toFixed(2)}s · ${selectedClip.lengthSec.toFixed(2)}s long`
+            : '— no clip selected'}
+        </span>
         <div className="ml-auto flex items-center gap-1 text-[10px]">
           <button
-            onClick={() => setPatternSteps(16)}
-            className={`px-2 py-0.5 rounded ${patternSteps === 16 ? 'bg-ghost-green/20 text-ghost-green' : 'text-white/40 hover:bg-white/[0.06] hover:text-white'}`}
+            onClick={handleAddClip}
+            className="px-2 py-0.5 rounded bg-ghost-green/15 text-ghost-green hover:bg-ghost-green/25"
+            title="Add clip at playhead"
+          >
+            + Clip
+          </button>
+          <button
+            onClick={() => selectedClip && setPatternSteps(selectedClip.id, 16)}
+            disabled={!selectedClip}
+            className={`px-2 py-0.5 rounded ${patternSteps === 16 && selectedClip ? 'bg-ghost-green/20 text-ghost-green' : 'text-white/40 hover:bg-white/[0.06] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-white/40'}`}
           >
             16
           </button>
           <button
-            onClick={() => setPatternSteps(32)}
-            className={`px-2 py-0.5 rounded ${patternSteps === 32 ? 'bg-ghost-green/20 text-ghost-green' : 'text-white/40 hover:bg-white/[0.06] hover:text-white'}`}
+            onClick={() => selectedClip && setPatternSteps(selectedClip.id, 32)}
+            disabled={!selectedClip}
+            className={`px-2 py-0.5 rounded ${patternSteps === 32 && selectedClip ? 'bg-ghost-green/20 text-ghost-green' : 'text-white/40 hover:bg-white/[0.06] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-white/40'}`}
           >
             32
           </button>
+          {selectedClip && (
+            <button
+              onClick={() => clearClip(selectedClip.id)}
+              className="px-2 py-0.5 rounded text-white/50 hover:bg-white/[0.06] hover:text-white"
+              title="Clear clip pattern"
+            >
+              Clear
+            </button>
+          )}
           <button
             onClick={() => addEmptyRow()}
             className="px-2 py-0.5 rounded text-white/50 hover:bg-white/[0.06] hover:text-white"
@@ -128,21 +166,28 @@ export default function DrumRackPanel({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      {/* Rows + grid */}
+      {/* Rows + grid for selected clip */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {rows.map((row) => (
+        {rows.map((row, rowIdx) => (
           <DrumRowItem
             key={row.id}
             row={row}
+            rowIdx={rowIdx}
             patternSteps={patternSteps}
+            steps={selectedClip?.steps[rowIdx] ?? null}
+            clipSelected={!!selectedClip}
             onDrop={(source) => loadIntoRow(row.id, source)}
-            onToggleStep={(idx) => toggleStep(row.id, idx)}
+            onToggleStep={(idx) => selectedClip && toggleStep(selectedClip.id, rowIdx, idx)}
             onSetVolume={(v) => setRowVolume(row.id, v)}
             onToggleMuted={() => toggleRowMuted(row.id)}
-            onClear={() => clearRow(row.id)}
             onRemove={() => removeRow(row.id)}
           />
         ))}
+        {!selectedClip && (
+          <div className="px-3 py-4 text-center text-[11px] text-white/35">
+            No clip selected. Click <span className="text-ghost-green">+ Clip</span> to add one at the playhead, or click an existing clip in the drum lane.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -150,14 +195,16 @@ export default function DrumRackPanel({ projectId }: { projectId: string }) {
 
 // ── Single row ───────────────────────────────────────────────────────────
 
-function DrumRowItem({ row, patternSteps, onDrop, onToggleStep, onSetVolume, onToggleMuted, onClear, onRemove }: {
+function DrumRowItem({ row, patternSteps, steps, clipSelected, onDrop, onToggleStep, onSetVolume, onToggleMuted, onRemove }: {
   row: DrumRow;
+  rowIdx: number;
   patternSteps: number;
+  steps: boolean[] | null;
+  clipSelected: boolean;
   onDrop: (source: { kind: 'os'; file: File } | { kind: 'library'; id: string; name: string } | { kind: 'projectFile'; id: string; name: string }) => void;
   onToggleStep: (idx: number) => void;
   onSetVolume: (v: number) => void;
   onToggleMuted: () => void;
-  onClear: () => void;
   onRemove: () => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
@@ -167,7 +214,6 @@ function DrumRowItem({ row, patternSteps, onDrop, onToggleStep, onSetVolume, onT
     e.preventDefault();
     e.stopPropagation();
     setDragOver(false);
-    // Sample-library drag wins if both are present.
     const lib = e.dataTransfer.getData(SAMPLE_LIBRARY_DRAG_MIME);
     if (lib) {
       try {
@@ -243,41 +289,31 @@ function DrumRowItem({ row, patternSteps, onDrop, onToggleStep, onSetVolume, onT
         title={`Volume ${Math.round(row.volume * 100)}%`}
       />
 
-      {/* Step grid */}
+      {/* Step grid (selected clip only) */}
       <div className="flex-1 flex items-center gap-[2px]">
         {Array.from({ length: patternSteps }).map((_, i) => {
-          const on = !!row.steps[i];
-          // Highlight the bar boundaries every 4 steps so the eye
-          // groups beats / 16ths visually.
+          const on = !!steps?.[i];
           const beatStart = i % 4 === 0;
           return (
             <button
               key={i}
-              onClick={() => onToggleStep(i)}
-              className="flex-1 h-6 rounded-sm transition-colors"
+              onClick={() => clipSelected && onToggleStep(i)}
+              disabled={!clipSelected}
+              className="flex-1 h-6 rounded-sm transition-colors disabled:cursor-not-allowed"
               style={{
                 background: on
                   ? `hsl(165, 70%, 45%)`
                   : beatStart ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
                 boxShadow: on ? 'inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.25)' : undefined,
+                opacity: clipSelected ? 1 : 0.4,
               }}
-              title={`Step ${i + 1}`}
+              title={clipSelected ? `Step ${i + 1}` : 'Select a clip first'}
             />
           );
         })}
       </div>
 
       {/* Row controls */}
-      <button
-        onClick={onClear}
-        className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-white/35 hover:text-white hover:bg-white/[0.06]"
-        title="Clear row"
-      >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M3 6h18" />
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-        </svg>
-      </button>
       <button
         onClick={onRemove}
         className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-white/30 hover:text-red-400 hover:bg-red-500/10"

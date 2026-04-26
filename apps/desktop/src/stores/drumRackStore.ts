@@ -1,88 +1,110 @@
 import { create } from 'zustand';
 import { getCtx, getMaster, safeStop } from './audio/graph';
 import { audioBufferCache } from '../lib/audio';
-void audioBufferCache;
 import { useAudioStore } from './audioStore';
 
+void audioBufferCache;
+
 // Drum-rack / step-sequencer store.
-// Each rack holds N rows (one sample per row) and a single pattern of
-// M steps. While the project transport is playing, a lookahead scheduler
-// runs every ~25 ms and queues any active step that falls in the next
-// ~120 ms window — same pattern Web Audio scheduling tutorials teach
-// (Chris Wilson "A Tale of Two Clocks"). Step time = projectBPM-derived
-// 16th-note duration; the pattern repeats indefinitely while the project
-// plays, so the rack feels like it's part of the arrangement.
+//
+// Architecture (Ableton-style, smarter than FL's pattern-playlist):
+//   - The rack itself owns SHARED sample slots (rows). Same kick / snare /
+//     hat across the whole song.
+//   - The arrangement holds CLIPS on a single drum-rack lane. Each clip
+//     carries its OWN step pattern + length. So bars 1-4 can fire a verse
+//     beat, bars 5-8 a fill, bars 9-12 the chorus — every clip is
+//     independently editable, no mode-switching like FL Studio.
+//   - The rack panel always shows the ROWS (samples) at the top and the
+//     SELECTED clip's step grid below — open the panel for a different
+//     clip and the grid swaps in.
+//   - The scheduler walks every clip on every tick and queues only steps
+//     whose project-time falls inside that clip's [startSec, endSec].
 
 export interface DrumRow {
   id: string;
   name: string;
-  fileId: string | null;        // project file id (audioBufferCache key)
-  buffer?: AudioBuffer;         // resolved at trigger time
-  volume: number;               // 0..1.5
+  fileId: string | null;
+  buffer?: AudioBuffer;
+  volume: number;
   muted: boolean;
-  steps: boolean[];             // length = patternSteps; true = on
+}
+
+export interface DrumClip {
+  id: string;
+  startSec: number;
+  lengthSec: number;
+  patternSteps: number;
+  // Steps are stored per-row. Outer index matches `rows[]`; inner array
+  // is length `patternSteps`. New rows added later get auto-padded.
+  steps: boolean[][];
 }
 
 interface DrumRackState {
   open: boolean;
   rows: DrumRow[];
-  patternSteps: number;         // 16 = one bar of 16ths, 32 = two bars
+  clips: DrumClip[];
+  selectedClipId: string | null;
+
   setOpen: (v: boolean) => void;
+
+  // Row-level (samples / mix)
   addEmptyRow: () => void;
   removeRow: (rowId: string) => void;
   setRowBuffer: (rowId: string, name: string, buffer: AudioBuffer, fileId?: string | null) => void;
   setRowVolume: (rowId: string, v: number) => void;
   toggleRowMuted: (rowId: string) => void;
-  toggleStep: (rowId: string, stepIdx: number) => void;
-  clearRow: (rowId: string) => void;
-  setPatternSteps: (n: 16 | 32) => void;
-  // Scheduler hooks called from PluginLayout when transport state changes.
+
+  // Clip-level (per-section patterns)
+  selectClip: (clipId: string | null) => void;
+  createClipAt: (startSec: number, lengthSec: number) => string;
+  deleteClip: (clipId: string) => void;
+  moveClip: (clipId: string, newStartSec: number) => void;
+  resizeClip: (clipId: string, newLengthSec: number) => void;
+  setPatternSteps: (clipId: string, n: 16 | 32) => void;
+  toggleStep: (clipId: string, rowIdx: number, stepIdx: number) => void;
+  clearClip: (clipId: string) => void;
+
+  // Scheduler
   startScheduler: (projectId: string) => void;
   stopScheduler: () => void;
 }
 
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
-let activeSources: Set<AudioBufferSourceNode> = new Set();
-// Bookkeeping for the scheduler — `nextStepIdx` walks the pattern, and
-// `nextStepCtxTime` is the AudioContext time at which that step fires.
-let nextStepIdx = 0;
-let nextStepCtxTime = 0;
+const activeSources: Set<AudioBufferSourceNode> = new Set();
 
 function makeRow(): DrumRow {
-  return {
-    id: crypto.randomUUID(),
-    name: 'Empty',
-    fileId: null,
-    volume: 1,
-    muted: false,
-    steps: new Array(16).fill(false),
-  };
+  return { id: crypto.randomUUID(), name: 'Empty', fileId: null, volume: 1, muted: false };
 }
 
-function stepDurationSec(projectBpm: number, patternSteps: number): number {
-  // 16 steps = 1 bar of 16th notes when the pattern is "16". For 32, it
-  // covers 2 bars of 16ths. Either way each step is the project's 16th-
-  // note duration.
-  void patternSteps;
-  const bpm = projectBpm > 0 ? projectBpm : 120;
-  return 60 / bpm / 4; // 16th note
+function emptySteps(rowCount: number, patternSteps: number): boolean[][] {
+  return Array.from({ length: rowCount }, () => new Array(patternSteps).fill(false));
 }
 
 export const useDrumRack = create<DrumRackState>((set, get) => ({
   open: false,
   rows: [makeRow(), makeRow(), makeRow(), makeRow()],
-  patternSteps: 16,
+  clips: [],
+  selectedClipId: null,
 
   setOpen: (v) => set({ open: v }),
 
-  addEmptyRow: () => set((s) => ({ rows: [...s.rows, makeRow()] })),
+  addEmptyRow: () => set((s) => ({
+    rows: [...s.rows, makeRow()],
+    // Pad each clip's pattern with a new empty row so indices stay aligned.
+    clips: s.clips.map((c) => ({ ...c, steps: [...c.steps, new Array(c.patternSteps).fill(false)] })),
+  })),
 
-  removeRow: (rowId) => set((s) => ({ rows: s.rows.filter((r) => r.id !== rowId) })),
+  removeRow: (rowId) => set((s) => {
+    const idx = s.rows.findIndex((r) => r.id === rowId);
+    if (idx < 0) return s;
+    return {
+      rows: s.rows.filter((r) => r.id !== rowId),
+      clips: s.clips.map((c) => ({ ...c, steps: c.steps.filter((_, i) => i !== idx) })),
+    };
+  }),
 
   setRowBuffer: (rowId, name, buffer, fileId) =>
-    set((s) => ({
-      rows: s.rows.map((r) => (r.id === rowId ? { ...r, name, buffer, fileId: fileId ?? null } : r)),
-    })),
+    set((s) => ({ rows: s.rows.map((r) => (r.id === rowId ? { ...r, name, buffer, fileId: fileId ?? null } : r)) })),
 
   setRowVolume: (rowId, v) =>
     set((s) => ({ rows: s.rows.map((r) => (r.id === rowId ? { ...r, volume: Math.max(0, Math.min(1.5, v)) } : r)) })),
@@ -90,68 +112,137 @@ export const useDrumRack = create<DrumRackState>((set, get) => ({
   toggleRowMuted: (rowId) =>
     set((s) => ({ rows: s.rows.map((r) => (r.id === rowId ? { ...r, muted: !r.muted } : r)) })),
 
-  toggleStep: (rowId, stepIdx) =>
-    set((s) => ({
-      rows: s.rows.map((r) => {
-        if (r.id !== rowId) return r;
-        const steps = r.steps.slice();
-        steps[stepIdx] = !steps[stepIdx];
-        return { ...r, steps };
-      }),
-    })),
+  selectClip: (clipId) => set({ selectedClipId: clipId }),
 
-  clearRow: (rowId) =>
-    set((s) => ({ rows: s.rows.map((r) => (r.id === rowId ? { ...r, steps: new Array(s.patternSteps).fill(false) } : r)) })),
-
-  setPatternSteps: (n) =>
+  createClipAt: (startSec, lengthSec) => {
+    const id = crypto.randomUUID();
     set((s) => ({
-      patternSteps: n,
-      rows: s.rows.map((r) => {
-        const steps = new Array(n).fill(false);
-        for (let i = 0; i < Math.min(n, r.steps.length); i++) steps[i] = r.steps[i];
-        return { ...r, steps };
-      }),
-    })),
+      clips: [...s.clips, {
+        id,
+        startSec: Math.max(0, startSec),
+        lengthSec: Math.max(0.05, lengthSec),
+        patternSteps: 16,
+        steps: emptySteps(s.rows.length, 16),
+      }],
+      selectedClipId: id,
+    }));
+    return id;
+  },
+
+  deleteClip: (clipId) => set((s) => ({
+    clips: s.clips.filter((c) => c.id !== clipId),
+    selectedClipId: s.selectedClipId === clipId ? null : s.selectedClipId,
+  })),
+
+  moveClip: (clipId, newStartSec) => set((s) => ({
+    clips: s.clips.map((c) => (c.id === clipId ? { ...c, startSec: Math.max(0, newStartSec) } : c)),
+  })),
+
+  resizeClip: (clipId, newLengthSec) => set((s) => ({
+    clips: s.clips.map((c) => (c.id === clipId ? { ...c, lengthSec: Math.max(0.05, newLengthSec) } : c)),
+  })),
+
+  setPatternSteps: (clipId, n) => set((s) => ({
+    clips: s.clips.map((c) => {
+      if (c.id !== clipId) return c;
+      const steps = c.steps.map((row) => {
+        const next = new Array(n).fill(false);
+        for (let i = 0; i < Math.min(n, row.length); i++) next[i] = row[i];
+        return next;
+      });
+      return { ...c, patternSteps: n, steps };
+    }),
+  })),
+
+  toggleStep: (clipId, rowIdx, stepIdx) => set((s) => ({
+    clips: s.clips.map((c) => {
+      if (c.id !== clipId) return c;
+      const steps = c.steps.map((r) => r.slice());
+      if (!steps[rowIdx]) steps[rowIdx] = new Array(c.patternSteps).fill(false);
+      steps[rowIdx][stepIdx] = !steps[rowIdx][stepIdx];
+      return { ...c, steps };
+    }),
+  })),
+
+  clearClip: (clipId) => set((s) => ({
+    clips: s.clips.map((c) => (c.id === clipId ? { ...c, steps: emptySteps(s.rows.length, c.patternSteps) } : c)),
+  })),
 
   startScheduler: () => {
     if (schedulerTimer) return;
     const ctx = getCtx();
-    nextStepIdx = 0;
-    nextStepCtxTime = ctx.currentTime + 0.05; // tiny lead-in so the first hit isn't dropped
+    // Track which (clipId, absoluteStepIdx) pairs we've already queued so
+    // we never double-fire across overlapping scheduler ticks.
+    const queued = new Set<string>();
 
     const tick = () => {
-      const { rows, patternSteps } = get();
       const audio = useAudioStore.getState();
       if (!audio.isPlaying) return;
-      const lookahead = 0.12; // schedule 120 ms ahead
-      const stepDur = stepDurationSec(audio.projectBpm, patternSteps);
-      const horizon = ctx.currentTime + lookahead;
+      const projectBpm = audio.projectBpm > 0 ? audio.projectBpm : 120;
+      const stepDur = 60 / projectBpm / 4; // 16th note
+      const lookahead = 0.12;
 
-      while (nextStepCtxTime < horizon) {
-        const stepIdx = nextStepIdx % patternSteps;
-        for (const r of rows) {
-          if (r.muted || !r.buffer || !r.steps[stepIdx]) continue;
-          const src = ctx.createBufferSource();
-          src.buffer = r.buffer;
-          const g = ctx.createGain();
-          g.gain.value = r.volume;
-          src.connect(g);
-          g.connect(getMaster());
-          src.start(nextStepCtxTime);
-          activeSources.add(src);
-          src.onended = () => {
-            activeSources.delete(src);
-            try { src.disconnect(); g.disconnect(); } catch { /* ignore */ }
-          };
+      // Map AudioContext time → project time via the started-at anchor that
+      // audioStore's playback maintains. Approximating as ctx.currentTime
+      // − (ctx.currentTime − projectStartedAt) is what audioStore does;
+      // here we just use audio.currentTime + a small lead, since the
+      // RAF-driven currentTime is updated at ~60fps.
+      const horizonProjectTime = audio.currentTime + lookahead;
+      const ctxNow = ctx.currentTime;
+
+      for (const clip of get().clips) {
+        const clipEnd = clip.startSec + clip.lengthSec;
+        if (clipEnd <= audio.currentTime) continue;
+        if (clip.startSec >= horizonProjectTime) continue;
+        // Walk the clip's step indices that intersect the lookahead window.
+        const clipDur = clip.lengthSec;
+        const stepsPerClip = Math.floor(clipDur / stepDur);
+        if (stepsPerClip <= 0) continue;
+        // Iterate every absolute step in this clip and schedule any whose
+        // project-time hits in the [now, horizon] window.
+        const startStep = Math.max(0, Math.floor((audio.currentTime - clip.startSec) / stepDur));
+        const endStep = Math.min(stepsPerClip, Math.ceil((horizonProjectTime - clip.startSec) / stepDur) + 1);
+        for (let absStep = startStep; absStep < endStep; absStep++) {
+          const stepProjectTime = clip.startSec + absStep * stepDur;
+          if (stepProjectTime < audio.currentTime - 0.005) continue;
+          if (stepProjectTime > horizonProjectTime) continue;
+          const queueKey = `${clip.id}:${absStep}`;
+          if (queued.has(queueKey)) continue;
+          queued.add(queueKey);
+          const stepIdx = absStep % clip.patternSteps;
+          const rows = get().rows;
+          for (let r = 0; r < rows.length; r++) {
+            const row = rows[r];
+            if (row.muted || !row.buffer) continue;
+            if (!clip.steps[r]?.[stepIdx]) continue;
+            const src = ctx.createBufferSource();
+            src.buffer = row.buffer;
+            const g = ctx.createGain();
+            g.gain.value = row.volume;
+            src.connect(g);
+            g.connect(getMaster());
+            const when = ctxNow + (stepProjectTime - audio.currentTime);
+            src.start(Math.max(ctxNow, when));
+            activeSources.add(src);
+            src.onended = () => {
+              activeSources.delete(src);
+              try { src.disconnect(); g.disconnect(); } catch { /* ignore */ }
+            };
+          }
         }
-        nextStepCtxTime += stepDur;
-        nextStepIdx++;
+      }
+      // Drop stale queued entries far behind the playhead so the set
+      // doesn't grow unbounded over a long session.
+      if (queued.size > 4096) {
+        const cutoff = audio.currentTime - 5;
+        queued.forEach((k) => {
+          const [, stepStr] = k.split(':');
+          const t = parseInt(stepStr, 10) * stepDur;
+          if (t < cutoff) queued.delete(k);
+        });
       }
     };
 
-    // Manual interval — Web Audio's clock and JS's clock drift, so the
-    // scheduler keeps the next-step time in audio-time and just fires
-    // every 25 ms to TOP UP the schedule horizon.
     schedulerTimer = setInterval(tick, 25);
     tick();
   },

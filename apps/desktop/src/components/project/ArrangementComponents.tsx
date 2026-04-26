@@ -723,71 +723,210 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
   );
 }
 
-/* ── Drum-rack lanes ──
-   One lane per drum-rack row. Each lane shows mini-clips for every
-   active step in the row's pattern, repeating across the whole
-   arrangement length. Reads from drumRackStore directly; toggling a
-   step in the rack panel materialises / removes a mini-clip here in
-   real time without any server round trip. */
+/* ── Drum-rack lane ──
+   One combined drum-rack lane with draggable clips. Each clip carries
+   its own step pattern; click an empty slot to add one, click a clip
+   to edit it in the panel below, drag the body to move, drag the
+   right edge to resize, right-click to delete. */
 function DrumRackLanes({ laneHeight }: { laneHeight: number }) {
+  const clips = useDrumRack((s) => s.clips);
   const rows = useDrumRack((s) => s.rows);
-  const patternSteps = useDrumRack((s) => s.patternSteps);
-  const toggleStep = useDrumRack((s) => s.toggleStep);
+  const selectedClipId = useDrumRack((s) => s.selectedClipId);
+  const selectClip = useDrumRack((s) => s.selectClip);
+  const createClipAt = useDrumRack((s) => s.createClipAt);
+  const moveClip = useDrumRack((s) => s.moveClip);
+  const resizeClip = useDrumRack((s) => s.resizeClip);
+  const deleteClip = useDrumRack((s) => s.deleteClip);
+  const setOpen = useDrumRack((s) => s.setOpen);
   const { bpm, arrangementDur } = useArrangement();
-  const stepDur = 60 / Math.max(1, bpm) / 4; // 16th note in seconds
-  const patternDur = stepDur * patternSteps;
+  const barSec = 240 / Math.max(1, bpm);
+  const laneRef = useRef<HTMLDivElement | null>(null);
+  const hue = 165; // ghost-green family for the drum lane
 
-  if (rows.length === 0 || arrangementDur <= 0) return null;
+  if (arrangementDur <= 0) return null;
+
+  // Convert a clientX to project-time using the lane's bounding box.
+  const xToTime = (clientX: number): number => {
+    const el = laneRef.current;
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return ratio * arrangementDur;
+  };
+
+  // Click empty space on the lane → create a 1-bar clip there.
+  const handleLaneMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('[data-drum-clip]')) return;
+    const t = xToTime(e.clientX);
+    const id = createClipAt(t, barSec);
+    selectClip(id);
+    setOpen(true);
+  };
 
   return (
     <div className="flex flex-col gap-1">
-      {rows.map((row, idx) => {
-        const hue = (270 + idx * 35) % 360; // rotate through brand-ish hues
-        return (
-          <div key={row.id} className="flex" style={{ height: laneHeight }}>
-            <div data-track-header className="h-full flex shrink-0">
-              <TrackHeader name={`DR · ${row.name || `Row ${idx + 1}`}`} hue={hue} trackIds={[]} />
-            </div>
-            <div
-              className="relative rounded-r-lg flex-1"
-              style={{
-                background: 'rgba(10,4,18,0.4)',
-                borderBottom: '1px solid rgba(255,255,255,0.04)',
-                opacity: row.muted ? 0.4 : 1,
-              }}
-            >
-              {/* Render every active step across every pattern repetition
-                  that fits inside the visible arrangement. */}
-              {Array.from({ length: Math.max(1, Math.ceil(arrangementDur / patternDur)) }).map((_, rep) => (
-                <div key={rep} className="absolute inset-0">
-                  {row.steps.map((on, stepIdx) => {
-                    if (!on) return null;
-                    const startTime = rep * patternDur + stepIdx * stepDur;
-                    if (startTime >= arrangementDur) return null;
-                    const leftPct = (startTime / arrangementDur) * 100;
-                    const widthPct = (stepDur / arrangementDur) * 100;
-                    return (
-                      <button
-                        key={stepIdx}
-                        onClick={(e) => { e.stopPropagation(); toggleStep(row.id, stepIdx); }}
-                        className="absolute top-1 bottom-1 rounded transition-transform hover:scale-y-105"
-                        style={{
-                          left: `${leftPct}%`,
-                          width: `${Math.max(0.4, widthPct - 0.1)}%`,
-                          background: `hsl(${hue}, 70%, 55%)`,
-                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25), 0 1px 4px rgba(0,0,0,0.4)',
-                          opacity: rep === 0 ? 1 : 0.65,
-                        }}
-                        title={`Step ${stepIdx + 1} — click to remove`}
-                      />
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
+      <div className="flex" style={{ height: laneHeight }}>
+        <div data-track-header className="h-full flex shrink-0">
+          <TrackHeader name="Drum Rack" hue={hue} trackIds={[]} />
+        </div>
+        <div
+          ref={laneRef}
+          onMouseDown={handleLaneMouseDown}
+          className="relative rounded-r-lg flex-1 cursor-cell"
+          style={{
+            background: 'rgba(10,4,18,0.4)',
+            borderBottom: '1px solid rgba(255,255,255,0.04)',
+          }}
+          title="Click empty space to add a clip"
+        >
+          {clips.map((clip) => (
+            <DrumClipBlock
+              key={clip.id}
+              clipId={clip.id}
+              startSec={clip.startSec}
+              lengthSec={clip.lengthSec}
+              patternSteps={clip.patternSteps}
+              steps={clip.steps}
+              rowCount={rows.length}
+              arrangementDur={arrangementDur}
+              hue={hue}
+              selected={clip.id === selectedClipId}
+              onSelect={() => { selectClip(clip.id); setOpen(true); }}
+              onMove={(newStart) => moveClip(clip.id, newStart)}
+              onResize={(newLen) => resizeClip(clip.id, newLen)}
+              onDelete={() => deleteClip(clip.id)}
+              xToTime={xToTime}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DrumClipBlock({
+  clipId, startSec, lengthSec, patternSteps, steps, rowCount,
+  arrangementDur, hue, selected, onSelect, onMove, onResize, onDelete, xToTime,
+}: {
+  clipId: string;
+  startSec: number;
+  lengthSec: number;
+  patternSteps: number;
+  steps: boolean[][];
+  rowCount: number;
+  arrangementDur: number;
+  hue: number;
+  selected: boolean;
+  onSelect: () => void;
+  onMove: (newStart: number) => void;
+  onResize: (newLen: number) => void;
+  onDelete: () => void;
+  xToTime: (clientX: number) => number;
+}) {
+  const leftPct = (startSec / arrangementDur) * 100;
+  const widthPct = Math.max(0.5, (lengthSec / arrangementDur) * 100);
+
+  // Drag (move) on the body. Drag (resize) on the right edge.
+  const dragRef = useRef<{ kind: 'move' | 'resize'; startX: number; startStart: number; startLen: number } | null>(null);
+
+  const onBodyDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    onSelect();
+    dragRef.current = { kind: 'move', startX: e.clientX, startStart: startSec, startLen: lengthSec };
+    const realMove = (ev: MouseEvent) => {
+      const d = dragRef.current; if (!d || d.kind !== 'move') return;
+      const dt = xToTime(ev.clientX) - xToTime(d.startX);
+      onMove(d.startStart + dt);
+    };
+    window.addEventListener('mousemove', realMove);
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', realMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const onResizeDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    onSelect();
+    dragRef.current = { kind: 'resize', startX: e.clientX, startStart: startSec, startLen: lengthSec };
+    const realMove = (ev: MouseEvent) => {
+      const d = dragRef.current; if (!d || d.kind !== 'resize') return;
+      const dt = xToTime(ev.clientX) - xToTime(d.startX);
+      onResize(d.startLen + dt);
+    };
+    window.addEventListener('mousemove', realMove);
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', realMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const onContext = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onDelete();
+  };
+
+  // Tiny preview: dot per active step, faintly stacked per row.
+  const dotsPerRow = Math.min(patternSteps, 32);
+
+  return (
+    <div
+      data-drum-clip
+      onMouseDown={onBodyDown}
+      onContextMenu={onContext}
+      className="absolute top-0.5 bottom-0.5 rounded overflow-hidden cursor-grab active:cursor-grabbing select-none"
+      style={{
+        left: `${leftPct}%`,
+        width: `${widthPct}%`,
+        background: `linear-gradient(180deg, hsla(${hue},70%,40%,0.95), hsla(${hue},65%,28%,0.95))`,
+        boxShadow: selected
+          ? `0 0 0 2px hsl(${hue},90%,65%), 0 2px 8px rgba(0,0,0,0.45)`
+          : 'inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 4px rgba(0,0,0,0.4)',
+      }}
+      title={`Drum clip — drag to move, right edge to resize, right-click to delete`}
+    >
+      {/* Step pattern preview overlaid as faint cells */}
+      <div className="absolute inset-1 flex flex-col gap-[1px] pointer-events-none">
+        {steps.slice(0, Math.max(1, rowCount)).map((rowSteps, rIdx) => (
+          <div key={rIdx} className="flex-1 flex gap-[1px] min-h-0">
+            {Array.from({ length: dotsPerRow }).map((_, sIdx) => {
+              const on = !!rowSteps?.[sIdx];
+              return (
+                <div
+                  key={sIdx}
+                  className="flex-1 rounded-[1px]"
+                  style={{
+                    background: on ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.08)',
+                  }}
+                />
+              );
+            })}
           </div>
-        );
-      })}
+        ))}
+      </div>
+      {/* Resize handle (right edge) */}
+      <div
+        onMouseDown={onResizeDown}
+        className="absolute top-0 bottom-0 right-0 w-1.5 cursor-ew-resize hover:bg-white/30"
+        title="Drag to resize"
+      />
+      {/* Label */}
+      <span
+        className="absolute top-0.5 left-1 text-[9px] font-semibold text-white/95 pointer-events-none"
+        style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}
+      >
+        {lengthSec.toFixed(2)}s
+      </span>
+      {/* satisfy unused-binding lint */}
+      <span className="hidden">{clipId}</span>
     </div>
   );
 }
