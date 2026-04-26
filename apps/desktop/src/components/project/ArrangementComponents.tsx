@@ -373,7 +373,15 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
 }) {
   const { arrangementDur, bpm } = useArrangement();
   const startOffset = useAudioStore((s) => s.loadedTracks.get(track.id)?.startOffset ?? 0);
-  const clipDur = useAudioStore((s) => s.loadedTracks.get(track.id)?.buffer?.duration ?? 0);
+  // Effective duration = buffer.duration / playbackRate. Stays constant
+  // when pitch changes, so the clip's visual width on the timeline doesn't
+  // shrink/grow as the user adjusts the pitch slider.
+  const clipDur = useAudioStore((s) => {
+    const t = s.loadedTracks.get(track.id);
+    if (!t?.buffer) return 0;
+    const rate = Math.pow(2, (t.pitch || 0) / 12);
+    return t.buffer.duration / Math.max(0.0001, rate);
+  });
   // Beat-aligned snap: firstBeatOffset tells us where inside the sample the
   // first detected beat lives. We snap that position (not the sample's
   // leading edge) to bar lines so kicks-with-lead-in hit the downbeat.
@@ -387,8 +395,14 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
     // and forcing a phantom-beat offset there is what stops them from
     // landing on bar lines.
     if (t.warp === false) return 0;
-    const factor = t.originalBuffer.duration > 0 ? t.buffer.duration / t.originalBuffer.duration : 1;
-    return t.firstBeatOffset * factor;
+    // buffer.duration includes the pitch-compensation pre-stretch; divide
+    // by playbackRate to get the EFFECTIVE (warped-only) length. Then the
+    // warp factor = effectiveLen / originalLen, and the beat offset in
+    // project-time = source firstBeatOffset * warpFactor.
+    const playbackRate = Math.pow(2, (t.pitch || 0) / 12);
+    const effectiveLen = t.buffer.duration / Math.max(0.0001, playbackRate);
+    const warpFactor = t.originalBuffer.duration > 0 ? effectiveLen / t.originalBuffer.duration : 1;
+    return t.firstBeatOffset * warpFactor;
   });
   const setTrackOffset = useAudioStore((s) => s.setTrackOffset);
   // Selection — drives the green ring + what Ctrl+C/Ctrl+V operate on.

@@ -48,6 +48,18 @@ function stretchForProject(
  * for WSOLA to handle gracefully.
  */
 interface PlayBufferResult { buffer: AudioBuffer; playbackRate: number }
+
+/**
+ * The clip's effective duration in PROJECT TIME, accounting for the
+ * pitch-compensation pre-stretch + matching playbackRate. This is what
+ * every visual / timing calculation should use — not buffer.duration —
+ * so pitching a clip doesn't change its visual width on the timeline.
+ */
+export function getEffectiveDuration(track: { buffer?: AudioBuffer; pitch?: number }): number {
+  if (!track.buffer) return 0;
+  const playbackRate = Math.pow(2, (track.pitch || 0) / 12);
+  return track.buffer.duration / Math.max(0.0001, playbackRate);
+}
 function composePlayBuffer(
   track: { originalBuffer?: AudioBuffer; bpm?: number; detectedBpm?: number; warp?: boolean; pitch?: number; character?: SampleCharacter; beats?: number[]; buffer: AudioBuffer },
   projectBpm: number,
@@ -201,7 +213,7 @@ export const useAudioStore = create<AudioState>((set, get) => {
     const { loadedTracks } = get();
     let maxDur = 0;
     loadedTracks.forEach((t) => {
-      const trackEnd = t.startOffset + t.buffer.duration;
+      const trackEnd = t.startOffset + getEffectiveDuration(t);
       if (trackEnd > maxDur) maxDur = trackEnd;
     });
     set({ duration: maxDur });
