@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Reorder, useDragControls } from 'framer-motion';
-import { useAudioStore, pendingTrackOffsets } from '../../stores/audioStore';
+import { useAudioStore, pendingTrackOffsets, pendingTrackProps } from '../../stores/audioStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useCollabStore } from '../../stores/collabStore';
 import { api } from '../../lib/api';
@@ -465,7 +465,24 @@ function LaneClip({ track, selectedProjectId, deleteTrack, trackZoom, laneWidth,
         name: srcTrack.name || 'Track', type: srcTrack.type || 'audio',
         fileId: srcTrack.fileId, fileName: srcTrack.name,
       } as any);
-      if (result?.id) pendingTrackOffsets.set(result.id, newOffset);
+      if (result?.id) {
+        pendingTrackOffsets.set(result.id, newOffset);
+        // Carry the source clip's mix state through so duplicates inherit
+        // volume / pitch / mute / warp / BPM override / trim instead of
+        // resetting to defaults.
+        if (loaded) {
+          pendingTrackProps.set(result.id, {
+            volume: loaded.volume,
+            muted: loaded.muted,
+            soloed: loaded.soloed,
+            pitch: loaded.pitch,
+            bpm: loaded.bpm || undefined,
+            warp: loaded.warp,
+            trimStart: loaded.trimStart,
+            trimEnd: loaded.trimEnd,
+          });
+        }
+      }
     }
     window.dispatchEvent(new CustomEvent('ghost-refresh-project'));
     window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));

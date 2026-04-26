@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useAudioStore, pendingTrackOffsets } from '../../stores/audioStore';
+import { useAudioStore, pendingTrackOffsets, pendingTrackProps } from '../../stores/audioStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { audioBufferCache, cacheBuffer, detectBpmFromName, formatTime, snapToGrid } from '../../lib/audio';
 import { api } from '../../lib/api';
@@ -22,6 +22,14 @@ interface ClipboardItem {
   type: string;
   relOffset: number;   // seconds from selectionStart
   duration: number;
+  // Mix state captured at copy-time so paste reproduces the clip exactly.
+  volume?: number;
+  muted?: boolean;
+  pitch?: number;
+  bpm?: number;
+  warp?: boolean;
+  trimStart?: number;
+  trimEnd?: number;
 }
 let clipClipboard: {
   items: ClipboardItem[];
@@ -380,7 +388,18 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
           const offset = loaded?.startOffset ?? 0;
           if (offset < selectionStart) selectionStart = offset;
           if (offset + duration > selectionEnd) selectionEnd = offset + duration;
-          items.push({ fileId: t.fileId, name: t.name || 'Clip', type: t.type || 'audio', relOffset: offset, duration });
+          items.push({
+            fileId: t.fileId, name: t.name || 'Clip', type: t.type || 'audio',
+            relOffset: offset, duration,
+            // Snapshot mix state so paste reproduces the source clip.
+            volume: loaded?.volume,
+            muted: loaded?.muted,
+            pitch: loaded?.pitch,
+            bpm: loaded?.bpm || undefined,
+            warp: loaded?.warp,
+            trimStart: loaded?.trimStart,
+            trimEnd: loaded?.trimEnd,
+          });
         }
         if (items.length === 0) return false;
         // Normalise to the time region's start. Each item's relOffset is
@@ -436,7 +455,21 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
               name: item.name, type: item.type as any,
               fileId: item.fileId, fileName: item.name,
             } as any);
-            if (result?.id) pendingTrackOffsets.set(result.id, itemOffset);
+            if (result?.id) {
+              pendingTrackOffsets.set(result.id, itemOffset);
+              // Carry the source clip's mix state so the paste reproduces
+              // it exactly (volume / pitch / mute / warp / BPM override /
+              // trim) instead of resetting to defaults.
+              pendingTrackProps.set(result.id, {
+                volume: item.volume,
+                muted: item.muted,
+                pitch: item.pitch,
+                bpm: item.bpm,
+                warp: item.warp,
+                trimStart: item.trimStart,
+                trimEnd: item.trimEnd,
+              });
+            }
           }));
           useAudioStore.getState().seekTo(baseOffset + bundle.selectionLength);
           window.dispatchEvent(new CustomEvent('ghost-refresh-project'));

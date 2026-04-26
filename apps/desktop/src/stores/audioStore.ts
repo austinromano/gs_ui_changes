@@ -43,6 +43,22 @@ export function getAnalyser(): AnalyserNode | null {
 // the original before the async seeder catches up.
 export const pendingTrackOffsets = new Map<string, number>();
 
+// Pending per-clip state for tracks that are about to land in the store
+// via loadTrackFromBuffer. Used by Duplicate / Ctrl+V paste so the new
+// clip inherits its source's volume / pitch / mute / warp / BPM override
+// / trim / pan instead of resetting to defaults.
+export interface PendingTrackProps {
+  volume?: number;
+  muted?: boolean;
+  soloed?: boolean;
+  pitch?: number;
+  bpm?: number;
+  warp?: boolean;
+  trimStart?: number;
+  trimEnd?: number;
+}
+export const pendingTrackProps = new Map<string, PendingTrackProps>();
+
 interface AudioState {
   isPlaying: boolean;
   currentTime: number;
@@ -382,6 +398,11 @@ export const useAudioStore = create<AudioState>((set, get) => {
         if (existing?.gainNode) { try { existing.gainNode.disconnect(); } catch { /* ignore */ } }
         const pending = pendingTrackOffsets.get(trackId);
         if (pending !== undefined) pendingTrackOffsets.delete(trackId);
+        // Pending per-clip props from a Duplicate / Ctrl+V paste — apply
+        // here so the newly-loaded track starts with the source clip's
+        // volume / pitch / mute / warp / BPM override.
+        const pendingProps = pendingTrackProps.get(trackId);
+        if (pendingProps) pendingTrackProps.delete(trackId);
 
         // Time-stretch to match the project's BPM when we have analysis
         // and warp is on. Source BPM = the user's manual override
@@ -389,19 +410,23 @@ export const useAudioStore = create<AudioState>((set, get) => {
         // originalBuffer pristine so every stretch starts from the source
         // (stretching a stretched buffer degrades quality fast).
         const projBpm = s.projectBpm;
-        const warp = existing ? existing.warp !== false : true;
-        const sourceBpm = (existing?.bpm && existing.bpm > 0) ? existing.bpm : detectedBpm;
+        const initialWarp = existing ? existing.warp : pendingProps?.warp;
+        const warp = initialWarp !== false;
+        const initialBpm = existing?.bpm || pendingProps?.bpm || 0;
+        const sourceBpm = (initialBpm > 0) ? initialBpm : detectedBpm;
         const playBuffer = (warp && sourceBpm)
           ? stretchForProject(buffer, sourceBpm, projBpm, { character, beats })
           : buffer;
 
         m.set(trackId, {
           id: trackId, buffer: playBuffer, source: null, gainNode: null,
-          volume: existing?.volume ?? 1, muted: existing?.muted ?? false,
-          soloed: existing?.soloed ?? false, bpm: trackBpm || existing?.bpm || 0,
-          pitch: existing?.pitch ?? 0,
-          trimStart: existing?.trimStart ?? 0,
-          trimEnd: existing?.trimEnd ?? 0,
+          volume: existing?.volume ?? pendingProps?.volume ?? 1,
+          muted: existing?.muted ?? pendingProps?.muted ?? false,
+          soloed: existing?.soloed ?? pendingProps?.soloed ?? false,
+          bpm: trackBpm || existing?.bpm || pendingProps?.bpm || 0,
+          pitch: existing?.pitch ?? pendingProps?.pitch ?? 0,
+          trimStart: existing?.trimStart ?? pendingProps?.trimStart ?? 0,
+          trimEnd: existing?.trimEnd ?? pendingProps?.trimEnd ?? 0,
           startOffset: existing?.startOffset ?? pending ?? 0,
           originalBuffer: buffer,
           detectedBpm,
