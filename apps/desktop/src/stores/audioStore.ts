@@ -60,6 +60,28 @@ export function getEffectiveDuration(track: { buffer?: AudioBuffer; pitch?: numb
   const playbackRate = Math.pow(2, (track.pitch || 0) / 12);
   return track.buffer.duration / Math.max(0.0001, playbackRate);
 }
+
+// Memoise stretched buffers per (originalBuffer, factor, character, beats).
+// Two clips that share the same source file and the same effective stretch
+// factor end up pointing at the SAME AudioBuffer — identical waveforms,
+// no per-clip variance, and one stretch pass instead of N. WeakMap keyed
+// on the original buffer means cache entries drop the moment the buffer
+// itself is GC'd.
+const stretchCache = new WeakMap<AudioBuffer, Map<string, AudioBuffer>>();
+function cachedAdaptiveStretch(
+  original: AudioBuffer,
+  factor: number,
+  meta: { character?: SampleCharacter; beats?: number[] },
+): AudioBuffer {
+  const key = `${factor.toFixed(6)}|${meta.character || ''}|${(meta.beats?.length ?? 0)}`;
+  let inner = stretchCache.get(original);
+  if (!inner) { inner = new Map(); stretchCache.set(original, inner); }
+  const hit = inner.get(key);
+  if (hit) return hit;
+  const result = adaptiveStretch(original, factor, getCtx(), meta);
+  inner.set(key, result);
+  return result;
+}
 function composePlayBuffer(
   track: { originalBuffer?: AudioBuffer; bpm?: number; detectedBpm?: number; warp?: boolean; pitch?: number; character?: SampleCharacter; beats?: number[]; buffer: AudioBuffer },
   projectBpm: number,
@@ -74,7 +96,7 @@ function composePlayBuffer(
     return { buffer: track.originalBuffer, playbackRate: pitchFactor };
   }
   try {
-    const buffer = adaptiveStretch(track.originalBuffer, stretchFactor, getCtx(), {
+    const buffer = cachedAdaptiveStretch(track.originalBuffer, stretchFactor, {
       character: track.character, beats: track.beats,
     });
     return { buffer, playbackRate: pitchFactor };
