@@ -390,35 +390,40 @@ function TrimHandle<S>({ edge, onDragStart, onDrag, onDragEnd }: {
   onDragEnd: () => void;
 }) {
   const [dragging, setDragging] = useState(false);
-  const snapRef = useRef<S | null>(null);
-  const startXRef = useRef(0);
 
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
+  // Attach pointer move/up listeners synchronously inside the pointerdown
+  // handler — not via a useEffect after a re-render — so we never miss the
+  // first pointermove on a fast drag. setPointerCapture routes the events
+  // back to this element even if the cursor leaves the 16px hit zone.
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    snapRef.current = onDragStart();
-    startXRef.current = e.clientX;
-    setDragging(true);
-  }, [onDragStart]);
+    const target = e.currentTarget;
+    const pointerId = e.pointerId;
+    try { target.setPointerCapture(pointerId); } catch { /* ignore — some browsers reject capture on certain pointer types */ }
 
-  useEffect(() => {
-    if (!dragging) return;
+    const snap = onDragStart();
+    const startX = e.clientX;
+    setDragging(true);
+
     const onMove = (ev: PointerEvent) => {
-      if (snapRef.current === null) return;
-      onDrag(snapRef.current, ev.clientX - startXRef.current);
+      if (ev.pointerId !== pointerId) return;
+      onDrag(snap, ev.clientX - startX);
     };
-    const onUp = () => {
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      try { target.releasePointerCapture(pointerId); } catch { /* ignore */ }
+      target.removeEventListener('pointermove', onMove);
+      target.removeEventListener('pointerup', onUp);
+      target.removeEventListener('pointercancel', onUp);
       setDragging(false);
-      snapRef.current = null;
       onDragEnd();
     };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-  }, [dragging, onDrag, onDragEnd]);
+
+    target.addEventListener('pointermove', onMove);
+    target.addEventListener('pointerup', onUp);
+    target.addEventListener('pointercancel', onUp);
+  };
 
   const isStart = edge === 'start';
   const edgeStyle: React.CSSProperties = isStart ? { left: 0 } : { right: 0 };
