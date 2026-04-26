@@ -7,6 +7,7 @@ export type StreamType = 'camera' | 'screen';
 export interface OnlineUser {
   userId: string;
   displayName: string;
+  avatarUrl: string | null;
   currentProjectId: string | null;
   currentProjectName: string | null;
 }

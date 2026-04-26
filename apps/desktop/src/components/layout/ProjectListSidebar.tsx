@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Reorder } from 'framer-motion';
 import type { SamplePack } from '@ghost/types';
 import { api } from '../../lib/api';
@@ -6,6 +6,7 @@ import { useAudioStore } from '../../stores/audioStore';
 import { ROOMS as COMMUNITY_ROOMS } from '../social/CommunityRooms';
 import { useCommunityStore } from '../../stores/communityStore';
 import SampleLibrarySection from './SampleLibrarySection';
+import Avatar from '../common/Avatar';
 
 export type { SamplePack };
 
@@ -187,6 +188,7 @@ function ProjectListSidebar({
   onSelectPack,
   onCreatePack,
   friends,
+  onlineActivity,
 }: {
   projects: { id: string; name: string }[];
   allProjects: any[];
@@ -199,7 +201,19 @@ function ProjectListSidebar({
   onSelectPack: (id: string) => void;
   onCreatePack: () => void;
   friends: { id: string; displayName: string; avatarUrl: string | null }[];
+  onlineActivity: Map<string, { userId: string; displayName: string; avatarUrl: string | null; currentProjectId: string | null }>;
 }) {
+  // Group online users by their currentProjectId once per render so each
+  // row is an O(1) lookup instead of an O(n) scan.
+  const usersByProject = useMemo(() => {
+    const m = new Map<string, Array<{ userId: string; displayName: string; avatarUrl: string | null }>>();
+    onlineActivity.forEach((u) => {
+      if (!u.currentProjectId) return;
+      if (!m.has(u.currentProjectId)) m.set(u.currentProjectId, []);
+      m.get(u.currentProjectId)!.push({ userId: u.userId, displayName: u.displayName, avatarUrl: u.avatarUrl });
+    });
+    return m;
+  }, [onlineActivity]);
   const favoritesOpen = true;
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [packsOpen, setPacksOpen] = useState(false);
@@ -307,6 +321,7 @@ function ProjectListSidebar({
                           </svg>
                           <span className="truncate">{p.name}</span>
                         </span>
+                        <ProjectPresenceCluster users={usersByProject.get(p.id) || []} />
                         <button
                           onClick={(e) => { e.stopPropagation(); toggleFavorite(p.id); }}
                           onPointerDown={(e) => e.stopPropagation()}
@@ -447,6 +462,41 @@ function ProjectListSidebar({
 
       {/* Storage usage */}
       <StorageBar />
+    </div>
+  );
+}
+
+// Tiny stacked-avatar cluster showing who is currently in a given project.
+// Renders nothing when nobody is connected so empty rows stay clean.
+function ProjectPresenceCluster({ users }: { users: Array<{ userId: string; displayName: string; avatarUrl: string | null }> }) {
+  if (!users || users.length === 0) return null;
+  const visible = users.slice(0, 3);
+  const extra = users.length - visible.length;
+  return (
+    <div
+      className="flex items-center -space-x-1.5 shrink-0 ml-1 pointer-events-none"
+      title={users.map((u) => u.displayName).join(', ')}
+    >
+      {visible.map((u) => (
+        <span
+          key={u.userId}
+          className="rounded-full"
+          style={{ border: '1.5px solid #0A0412' }}
+        >
+          {/* userId={null} so the avatar inside the project row never tries
+              to navigate to the user's profile; the row's onClick should
+              own the click. */}
+          <Avatar name={u.displayName} src={u.avatarUrl} size="xs" userId={null} />
+        </span>
+      ))}
+      {extra > 0 && (
+        <span
+          className="text-[8px] font-bold text-white/70 rounded-full flex items-center justify-center"
+          style={{ width: 16, height: 16, background: 'rgba(255,255,255,0.08)', border: '1.5px solid #0A0412' }}
+        >
+          +{extra}
+        </span>
+      )}
     </div>
   );
 }

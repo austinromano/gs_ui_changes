@@ -594,6 +594,7 @@ export default function PluginLayout() {
                     onSelectPack={handleSelectPack}
                     onCreatePack={handleCreatePack}
                     friends={friends}
+                    onlineActivity={onlineActivity}
                   />
                 </div>
               </>

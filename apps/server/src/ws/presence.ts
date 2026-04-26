@@ -6,7 +6,7 @@ import { projects } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 
 type GhostSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
-type GlobalOnline = Map<string, { userId: string; displayName: string; currentProjectId: string | null; currentProjectName: string | null }>;
+type GlobalOnline = Map<string, { userId: string; displayName: string; avatarUrl: string | null; currentProjectId: string | null; currentProjectName: string | null }>;
 
 // Track online users per project room
 const roomUsers = new Map<string, Map<string, PresenceInfo>>();
