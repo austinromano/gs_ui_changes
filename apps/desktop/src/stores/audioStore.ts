@@ -5,7 +5,7 @@ import { audioBufferCache, cacheBuffer, clearAudioCaches } from '../lib/audio';
 import { getCtx, getMaster, getMasterFader, getAnalyser as getAnalyserNode, safeStop } from './audio/graph';
 import { save as saveArrangement, load as loadArrangement } from './audio/arrangement';
 import { cloneBuffer, loopBufferToLength, splitBufferAt } from './audio/bufferOps';
-import type { LoadedTrack, UndoSnapshot } from './audio/types';
+import type { LoadedTrack, UndoSnapshot, WarpMarker } from './audio/types';
 import { adaptiveStretch, type SampleCharacter } from '../lib/stretch';
 
 /**
@@ -82,8 +82,95 @@ function cachedAdaptiveStretch(
   inner.set(key, result);
   return result;
 }
+// Slice a portion of an AudioBuffer into a fresh AudioBuffer. Used by
+// the piecewise warp stretcher to break the source into per-segment
+// chunks before stretching each at its own factor.
+function sliceAudioBuffer(src: AudioBuffer, startSec: number, endSec: number): AudioBuffer {
+  const ctx = getCtx();
+  const startSample = Math.max(0, Math.floor(startSec * src.sampleRate));
+  const endSample = Math.min(src.length, Math.ceil(endSec * src.sampleRate));
+  const length = Math.max(1, endSample - startSample);
+  const out = ctx.createBuffer(src.numberOfChannels, length, src.sampleRate);
+  for (let ch = 0; ch < src.numberOfChannels; ch++) {
+    const srcCh = src.getChannelData(ch);
+    const dstCh = out.getChannelData(ch);
+    for (let i = 0; i < length; i++) dstCh[i] = srcCh[startSample + i];
+  }
+  return out;
+}
+
+// Concatenate AudioBuffers head-to-tail. Output sample rate / channel
+// count matches the first input.
+function concatAudioBuffers(parts: AudioBuffer[]): AudioBuffer {
+  const ctx = getCtx();
+  if (parts.length === 0) return ctx.createBuffer(2, 1, ctx.sampleRate);
+  const sampleRate = parts[0].sampleRate;
+  const channels = parts[0].numberOfChannels;
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = ctx.createBuffer(channels, total, sampleRate);
+  for (let ch = 0; ch < channels; ch++) {
+    const dst = out.getChannelData(ch);
+    let pos = 0;
+    for (const p of parts) {
+      const src = p.getChannelData(Math.min(ch, p.numberOfChannels - 1));
+      dst.set(src, pos);
+      pos += p.length;
+    }
+  }
+  return out;
+}
+
+// Piecewise WSOLA stretch driven by warp markers. Each adjacent pair
+// of (sourceSec, bufferSec) anchors defines a segment; the source slice
+// for that segment is stretched to fit its target buffer length, then
+// every segment is concatenated. Implicit anchors (0, 0) and
+// (sourceLen, sourceLen * baseStretch) bracket the user's markers so
+// the head and tail of the buffer always render.
+function stretchWithMarkers(
+  original: AudioBuffer,
+  markers: WarpMarker[],
+  baseStretch: number,
+  meta: { character?: SampleCharacter; beats?: number[] },
+): AudioBuffer {
+  const sorted = markers.slice().sort((a, b) => a.sourceSec - b.sourceSec);
+  const points: WarpMarker[] = [
+    { sourceSec: 0, bufferSec: 0 },
+    ...sorted,
+    { sourceSec: original.duration, bufferSec: original.duration * baseStretch },
+  ];
+  const segments: AudioBuffer[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const sourceLen = b.sourceSec - a.sourceSec;
+    const bufferLen = b.bufferSec - a.bufferSec;
+    if (sourceLen <= 0 || bufferLen <= 0) continue;
+    const factor = bufferLen / sourceLen;
+    const slice = sliceAudioBuffer(original, a.sourceSec, b.sourceSec);
+    if (Math.abs(factor - 1) < 0.005) {
+      segments.push(slice);
+    } else {
+      try {
+        segments.push(adaptiveStretch(slice, factor, getCtx(), meta));
+      } catch {
+        segments.push(slice);
+      }
+    }
+  }
+  return concatAudioBuffers(segments);
+}
+
+// Scale every marker's bufferSec by the same ratio that the global
+// stretch factor changed by — keeps markers locked to their musical
+// positions through tempo / pitch / warp changes.
+function rescaleWarpMarkers(markers: WarpMarker[] | undefined, ratio: number): WarpMarker[] | undefined {
+  if (!markers || markers.length === 0) return markers;
+  if (Math.abs(ratio - 1) < 1e-6) return markers;
+  return markers.map((m) => ({ sourceSec: m.sourceSec, bufferSec: m.bufferSec * ratio }));
+}
+
 function composePlayBuffer(
-  track: { originalBuffer?: AudioBuffer; bpm?: number; detectedBpm?: number; warp?: boolean; pitch?: number; character?: SampleCharacter; beats?: number[]; buffer: AudioBuffer },
+  track: { originalBuffer?: AudioBuffer; bpm?: number; detectedBpm?: number; warp?: boolean; pitch?: number; character?: SampleCharacter; beats?: number[]; buffer: AudioBuffer; warpMarkers?: WarpMarker[] },
   projectBpm: number,
 ): PlayBufferResult {
   const pitchFactor = Math.pow(2, (track.pitch || 0) / 12);
@@ -91,16 +178,31 @@ function composePlayBuffer(
   const sourceBpm = (track.bpm && track.bpm > 0) ? track.bpm : track.detectedBpm;
   const warpActive = track.warp !== false && !!sourceBpm && sourceBpm > 0 && projectBpm > 0;
   const warpFactor = warpActive ? (sourceBpm! / projectBpm) : 1;
-  const stretchFactor = warpFactor * pitchFactor;
-  // Only run WSOLA if the stretch is meaningful — anything inside ±2% is
-  // imperceptible in tempo terms and not worth the spectral artefacts a
-  // time-stretch always introduces. Same bail-out at extreme ratios where
-  // WSOLA breaks down (use the source as-is plus playbackRate).
-  if (Math.abs(stretchFactor - 1) < 0.02 || stretchFactor < 0.4 || stretchFactor > 2.5) {
+  const baseStretch = warpFactor * pitchFactor;
+  // Piecewise warp path — user has placed at least one warp marker.
+  // Each segment between markers gets its own stretch factor based on
+  // its target buffer length, so dragging a marker re-positions audio
+  // independently of every other marker.
+  if (track.warpMarkers && track.warpMarkers.length > 0) {
+    try {
+      const buffer = stretchWithMarkers(track.originalBuffer, track.warpMarkers, baseStretch, {
+        character: track.character, beats: track.beats,
+      });
+      return { buffer, playbackRate: pitchFactor };
+    } catch {
+      // fall through to global stretch on failure
+    }
+  }
+  // Global stretch (the original path) — only run WSOLA if the stretch
+  // is meaningful. Anything inside ±2% is imperceptible and not worth
+  // the spectral artefacts a time-stretch always introduces. Same
+  // bail-out at extreme ratios where WSOLA breaks down (use the source
+  // as-is plus playbackRate).
+  if (Math.abs(baseStretch - 1) < 0.02 || baseStretch < 0.4 || baseStretch > 2.5) {
     return { buffer: track.originalBuffer, playbackRate: pitchFactor };
   }
   try {
-    const buffer = cachedAdaptiveStretch(track.originalBuffer, stretchFactor, {
+    const buffer = cachedAdaptiveStretch(track.originalBuffer, baseStretch, {
       character: track.character, beats: track.beats,
     });
     return { buffer, playbackRate: pitchFactor };
@@ -213,7 +315,7 @@ interface AudioState {
   setTrackSoloed: (trackId: string, soloed: boolean) => void;
   setTrackPitch: (trackId: string, semitones: number) => void;
   setTrackTrim: (trackId: string, trimStart: number, trimEnd: number) => void;
-  setTrackWarpMarkers: (trackId: string, markers: number[]) => void;
+  setTrackWarpMarkers: (trackId: string, markers: WarpMarker[]) => void;
   setTrackOffset: (trackId: string, offset: number) => void;
   duplicateTrack: (trackId: string) => string | null;
   splitTrack: (trackId: string, atTime: number) => string | null;
@@ -569,6 +671,7 @@ export const useAudioStore = create<AudioState>((set, get) => {
           if (t.warp !== false) {
             next.trimStart = t.trimStart * ratio;
             next.trimEnd = t.trimEnd * ratio;
+            next.warpMarkers = rescaleWarpMarkers(t.warpMarkers, ratio);
           }
           m.set(id, next);
         });
@@ -621,11 +724,13 @@ export const useAudioStore = create<AudioState>((set, get) => {
         if (track.source) safeStop(track.source);
         if (track.gainNode) { try { track.gainNode.disconnect(); } catch { /* ignore */ } }
         const oldLen = track.buffer.duration;
-        const { buffer: nextBuffer } = composePlayBuffer({ ...track, bpm }, projectBpm);
-        // Same trim-rescale story as setTrackPitch — buffer length changes
-        // when the warp factor moves, so trim has to follow it.
+        // warpFactor change ratio = old / new source BPM (warpFactor = sourceBpm / projectBpm).
+        const oldSrcBpm = (track.bpm && track.bpm > 0) ? track.bpm : (track.detectedBpm || bpm);
+        const markerRatio = oldSrcBpm > 0 ? bpm / oldSrcBpm : 1;
+        const scaledMarkers = rescaleWarpMarkers(track.warpMarkers, markerRatio);
+        const { buffer: nextBuffer } = composePlayBuffer({ ...track, bpm, warpMarkers: scaledMarkers }, projectBpm);
         const ratio = oldLen > 0 ? nextBuffer.duration / oldLen : 1;
-        m.set(trackId, { ...track, bpm, buffer: nextBuffer, trimStart: track.trimStart * ratio, trimEnd: track.trimEnd * ratio, source: null, gainNode: null });
+        m.set(trackId, { ...track, bpm, buffer: nextBuffer, trimStart: track.trimStart * ratio, trimEnd: track.trimEnd * ratio, warpMarkers: scaledMarkers, source: null, gainNode: null });
         set({ loadedTracks: m, bufferVersion: get().bufferVersion + 1 });
       } else {
         m.set(trackId, { ...track, bpm });
@@ -647,12 +752,15 @@ export const useAudioStore = create<AudioState>((set, get) => {
       if (track.source) safeStop(track.source);
       if (track.gainNode) { try { track.gainNode.disconnect(); } catch { /* ignore */ } }
       const oldLen = track.buffer.duration;
-      const { buffer: nextBuffer } = composePlayBuffer({ ...track, warp }, projectBpm);
-      // Toggling warp can flip the buffer length dramatically (warp on +
-      // big BPM mismatch = much longer/shorter buffer). Trim has to scale
-      // by the same ratio.
+      // warpFactor flips between (sourceBpm/projectBpm) and 1 when warp toggles.
+      const sourceBpm = (track.bpm && track.bpm > 0) ? track.bpm : track.detectedBpm;
+      const oldWarpFactor = (track.warp !== false && sourceBpm && sourceBpm > 0 && projectBpm > 0) ? (sourceBpm / projectBpm) : 1;
+      const newWarpFactor = (warp !== false && sourceBpm && sourceBpm > 0 && projectBpm > 0) ? (sourceBpm / projectBpm) : 1;
+      const markerRatio = newWarpFactor / oldWarpFactor;
+      const scaledMarkers = rescaleWarpMarkers(track.warpMarkers, markerRatio);
+      const { buffer: nextBuffer } = composePlayBuffer({ ...track, warp, warpMarkers: scaledMarkers }, projectBpm);
       const ratio = oldLen > 0 ? nextBuffer.duration / oldLen : 1;
-      m.set(trackId, { ...track, warp, buffer: nextBuffer, trimStart: track.trimStart * ratio, trimEnd: track.trimEnd * ratio, source: null, gainNode: null });
+      m.set(trackId, { ...track, warp, buffer: nextBuffer, trimStart: track.trimStart * ratio, trimEnd: track.trimEnd * ratio, warpMarkers: scaledMarkers, source: null, gainNode: null });
       set({ loadedTracks: m, bufferVersion: get().bufferVersion + 1 });
       restartIfPlaying();
       window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
@@ -816,7 +924,13 @@ export const useAudioStore = create<AudioState>((set, get) => {
       if (track.source) safeStop(track.source);
       if (track.gainNode) { try { track.gainNode.disconnect(); } catch { /* ignore */ } }
       const oldLen = track.buffer.duration;
-      const next = composePlayBuffer({ ...track, pitch }, projectBpm);
+      // Scale warp markers FIRST (by the pitch-factor change ratio) so
+      // composePlayBuffer's piecewise path uses the new musical positions.
+      const oldPitchFactor = Math.pow(2, (track.pitch || 0) / 12);
+      const newPitchFactor = Math.pow(2, pitch / 12);
+      const markerRatio = newPitchFactor / oldPitchFactor;
+      const scaledMarkers = rescaleWarpMarkers(track.warpMarkers, markerRatio);
+      const next = composePlayBuffer({ ...track, pitch, warpMarkers: scaledMarkers }, projectBpm);
       // Scale trim by the buffer-length change. trimStart / trimEnd live in
       // BUFFER seconds, so when the pre-stretch length changes (e.g. +12
       // semitones doubles the buffer), the trim points have to scale by
@@ -826,7 +940,7 @@ export const useAudioStore = create<AudioState>((set, get) => {
       const ratio = oldLen > 0 ? next.buffer.duration / oldLen : 1;
       const trimStart = track.trimStart * ratio;
       const trimEnd = track.trimEnd * ratio; // 0 means "use full" — stays 0
-      m.set(trackId, { ...track, pitch, buffer: next.buffer, trimStart, trimEnd, source: null, gainNode: null });
+      m.set(trackId, { ...track, pitch, buffer: next.buffer, trimStart, trimEnd, warpMarkers: scaledMarkers, source: null, gainNode: null });
       set({ loadedTracks: m, bufferVersion: get().bufferVersion + 1 });
       restartIfPlaying();
       window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
@@ -901,16 +1015,34 @@ export const useAudioStore = create<AudioState>((set, get) => {
     },
 
     setTrackWarpMarkers: (trackId, markers) => {
-      const { loadedTracks } = get();
+      const { loadedTracks, projectBpm } = get();
       const track = loadedTracks.get(trackId);
       if (!track) return;
-      // Sort + dedupe so segment math is stable downstream once we hook
-      // markers into the stretch engine.
-      const sorted = Array.from(new Set(markers))
-        .filter((m) => Number.isFinite(m) && m >= 0)
-        .sort((a, b) => a - b);
+      // Sort by source position + drop invalid entries so segment math
+      // downstream is stable.
+      const sorted = markers
+        .filter((m) => m && Number.isFinite(m.sourceSec) && Number.isFinite(m.bufferSec) && m.sourceSec >= 0 && m.bufferSec >= 0)
+        .sort((a, b) => a.sourceSec - b.sourceSec);
       track.warpMarkers = sorted;
-      set({ loadedTracks: new Map(loadedTracks) });
+      // Rebuild the play buffer through composePlayBuffer — when markers
+      // are present this triggers the piecewise stretch path. If the
+      // buffer length changes, scale the trim points to keep them
+      // pinned to the same musical positions (same dance as
+      // setTrackPitch).
+      if (track.originalBuffer) {
+        if (track.source) safeStop(track.source);
+        if (track.gainNode) { try { track.gainNode.disconnect(); } catch { /* ignore */ } }
+        const oldLen = track.buffer.duration;
+        const next = composePlayBuffer(track, projectBpm);
+        const ratio = oldLen > 0 ? next.buffer.duration / oldLen : 1;
+        track.buffer = next.buffer;
+        track.trimStart = track.trimStart * ratio;
+        track.trimEnd = track.trimEnd * ratio;
+        track.source = null;
+        track.gainNode = null;
+      }
+      set({ loadedTracks: new Map(loadedTracks), bufferVersion: get().bufferVersion + 1 });
+      restartIfPlaying();
       window.dispatchEvent(new CustomEvent('ghost-save-arrangement'));
     },
 
@@ -1033,7 +1165,20 @@ export const useAudioStore = create<AudioState>((set, get) => {
           existing.muted = clip.muted;
           existing.soloed = clip.soloed;
           existing.pitch = clip.pitch;
-          existing.warpMarkers = (clip as any).warpMarkers;
+          // Migrate old `number[]` format from the first warp-marker
+          // commit into the new {sourceSec, bufferSec} object form.
+          // bufferSec defaults to sourceSec * baseStretch so old markers
+          // play the same as before until the user drags them.
+          const rawMarkers = (clip as any).warpMarkers;
+          if (Array.isArray(rawMarkers) && rawMarkers.length > 0 && typeof rawMarkers[0] === 'number') {
+            const sourceBpm = (clip.bpm && clip.bpm > 0) ? clip.bpm : (existing.detectedBpm ?? 0);
+            const warpFactor = (clip.warp !== false && sourceBpm > 0 && projectBpm > 0) ? (sourceBpm / projectBpm) : 1;
+            const pitchFactor = Math.pow(2, (clip.pitch || 0) / 12);
+            const baseStretch = warpFactor * pitchFactor;
+            existing.warpMarkers = (rawMarkers as number[]).map((s) => ({ sourceSec: s, bufferSec: s * baseStretch }));
+          } else {
+            existing.warpMarkers = rawMarkers;
+          }
           // Warp / BPM override / pitch can all change in a remote update.
           // Detect any of them shifting and rebuild the playback buffer
           // through composePlayBuffer so the combined warp + pitch stretch

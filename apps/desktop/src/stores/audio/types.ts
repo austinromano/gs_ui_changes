@@ -29,12 +29,20 @@ export interface LoadedTrack {
   // (loadTrack, splitTrack, duplicateTrack) keep compiling without each
   // having to opt in explicitly.
   warp?: boolean;
-  // User-pinned warp markers, in ORIGINAL buffer seconds. Empty array
-  // means "no manual warp markers" — playback uses the global stretch
-  // factor. When populated, future versions will warp each segment
-  // between markers independently (Ableton-style). For now they're
-  // visual + interactive only.
-  warpMarkers?: number[];
+  // User-pinned warp markers, Ableton-style. `sourceSec` is the
+  // position in the ORIGINAL buffer the marker is anchored to;
+  // `bufferSec` is where in the PLAY (pre-stretched) buffer that
+  // anchor should land. composePlayBuffer reads this list and
+  // piecewise-stretches each [m_i, m_{i+1}] source segment to fit the
+  // matching [m_i, m_{i+1}] buffer segment.
+  // Empty array → no manual markers → fall back to a single global
+  // stretch factor.
+  warpMarkers?: WarpMarker[];
+}
+
+export interface WarpMarker {
+  sourceSec: number;
+  bufferSec: number;
 }
 
 export interface UndoSnapshot {
@@ -59,9 +67,9 @@ export interface ArrangementClipState {
   // Whether warp/stretch is active. Undefined ≡ true (default) so old
   // arrangement blobs without this field keep behaving the same.
   warp?: boolean;
-  // User-pinned warp markers in original-buffer seconds. Persisted with
+  // User-pinned warp markers (sourceSec + bufferSec). Persisted with
   // the arrangement so the user's marker placements survive a reload.
-  warpMarkers?: number[];
+  warpMarkers?: WarpMarker[];
   parentTrackId?: string;
   parentFileId?: string;
 }

@@ -333,19 +333,23 @@ function WarpMarkerOverlay({ trackId, beats }: { trackId: string; beats: number[
   const trimEnd = useAudioStore((s) => s.loadedTracks.get(trackId)?.trimEnd ?? 0);
   const bufferDuration = useAudioStore((s) => s.loadedTracks.get(trackId)?.buffer?.duration ?? 0);
   const originalDuration = useAudioStore((s) => s.loadedTracks.get(trackId)?.originalBuffer?.duration ?? 0);
-  const warpMarkers = useAudioStore((s) => s.loadedTracks.get(trackId)?.warpMarkers ?? []);
+  const warpMarkersRaw = useAudioStore((s) => s.loadedTracks.get(trackId)?.warpMarkers ?? []);
   const setTrackWarpMarkers = useAudioStore((s) => s.setTrackWarpMarkers);
 
   if (bufferDuration <= 0) return null;
   const effectiveTrimEnd = trimEnd > 0 ? trimEnd : bufferDuration;
 
-  // Beat positions are in ORIGINAL buffer seconds. Stretch ratio between
-  // original and current play buffer maps them into buffer time so they
-  // sit on the same pixel as the matching transient in the rendered
-  // waveform.
+  // Stretch ratio between original and current play buffer — used both
+  // to compute default bufferSec when adding a new marker, and to map
+  // detected transients (in original-buffer time) to the rendered
+  // waveform (in buffer time).
   const stretchRatio = originalDuration > 0 ? bufferDuration / originalDuration : 1;
   const sourceToBufferTime = (s: number) => s * stretchRatio;
-  const bufferToSourceTime = (b: number) => b / Math.max(0.0001, stretchRatio);
+
+  // Markers in the store are { sourceSec, bufferSec } — the bufferSec
+  // is what drives both the visual position AND the piecewise stretch
+  // segment lengths in composePlayBuffer.
+  const warpMarkers = warpMarkersRaw;
 
   // Map a buffer-time value to the visible pixel position (percentage)
   // inside the trimmed waveform. Returns null if outside the trim range.
@@ -360,8 +364,10 @@ function WarpMarkerOverlay({ trackId, beats }: { trackId: string; beats: number[
     const rect = e.currentTarget.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
     const bufTime = trimStart + pct * (effectiveTrimEnd - trimStart);
-    const sourceTime = bufferToSourceTime(bufTime);
-    setTrackWarpMarkers(trackId, [...warpMarkers, sourceTime]);
+    // New marker plays the same as the global stretch: bufferSec
+    // = sourceSec * stretchRatio. Drag later changes bufferSec only.
+    const sourceTime = bufTime / Math.max(0.0001, stretchRatio);
+    setTrackWarpMarkers(trackId, [...warpMarkers, { sourceSec: sourceTime, bufferSec: bufTime }]);
   };
 
   const onMarkerPointerDown = (idx: number) => (e: React.PointerEvent<HTMLDivElement>) => {
@@ -371,12 +377,16 @@ function WarpMarkerOverlay({ trackId, beats }: { trackId: string; beats: number[
     const target = e.currentTarget;
     const rect = target.parentElement!.getBoundingClientRect();
     target.setPointerCapture?.(e.pointerId);
+    // Capture sourceSec at drag start; only bufferSec changes as the
+    // user drags. This is the Ableton model — the marker stays pinned
+    // to the same source position, the audio between markers warps to
+    // make that position land where the user drops the marker.
+    const pinnedSource = warpMarkers[idx]?.sourceSec ?? 0;
     const onMove = (ev: PointerEvent) => {
       const pct = (ev.clientX - rect.left) / rect.width;
       const bufTime = trimStart + Math.max(0, Math.min(1, pct)) * (effectiveTrimEnd - trimStart);
-      const sourceTime = bufferToSourceTime(bufTime);
       const next = warpMarkers.slice();
-      next[idx] = sourceTime;
+      next[idx] = { sourceSec: pinnedSource, bufferSec: bufTime };
       setTrackWarpMarkers(trackId, next);
     };
     const onUp = () => {
@@ -423,10 +433,11 @@ function WarpMarkerOverlay({ trackId, beats }: { trackId: string; beats: number[
         );
       })}
       {/* User warp markers — gold draggable triangles + a thin gold line
-          straight down through the waveform so they're easy to spot. */}
-      {warpMarkers.map((sourceSec, i) => {
-        const bufTime = sourceToBufferTime(sourceSec);
-        const pct = bufTimeToPct(bufTime);
+          straight down through the waveform so they're easy to spot.
+          Position uses bufferSec (the warped-time anchor) so dragging
+          a marker visually moves it where the user dropped it. */}
+      {warpMarkers.map((m, i) => {
+        const pct = bufTimeToPct(m.bufferSec);
         if (pct === null) return null;
         return (
           <div
