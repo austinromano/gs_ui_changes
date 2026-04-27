@@ -41,12 +41,17 @@ export default memo(function Waveform({
     ? fullEffectiveDuration * (viewSpan / bufferDuration)
     : 0;
 
-  // If no fileId but we have a buffer (e.g. duplicated/split track), derive waveform from buffer
+  // Always prefer the live track buffer when one's loaded. This is what
+  // makes warp markers, pitch shifts, BPM stretches, and per-clip
+  // duplicates render their actual processed waveform — not the
+  // cached original PCM. fileId-based decode below stays as a fallback
+  // for when no track has been loaded yet (e.g. sample library
+  // previews that don't go through audioStore).
   useEffect(() => {
-    if (!fileId && trackBuffer) {
+    if (trackBuffer) {
       setRawData(trackBuffer.getChannelData(0));
     }
-  }, [fileId, trackBuffer]);
+  }, [trackBuffer]);
 
   useEffect(() => {
     if (!fileId || !projectId) return;
