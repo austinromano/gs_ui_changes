@@ -24,6 +24,7 @@ import SettingsPopup from '../common/SettingsPopup';
 import NotificationPopup, { BellIcon } from '../common/NotificationPopup';
 import InboxPopup from '../common/InboxPopup';
 import InviteModal from '../common/InviteModal';
+import ShareModal from './ShareModal';
 import VideoGrid from '../video/VideoGrid';
 import ScreenShareView from '../video/ScreenShareView';
 import FullMixDropZone from '../tracks/FullMixDropZone';
@@ -232,6 +233,7 @@ export default function PluginLayout() {
   const [showNotifs, setShowNotifs] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [friends, setFriends] = useState<{ id: string; displayName: string; avatarUrl: string | null }[]>([]);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [reverting, setReverting] = useState(false);
@@ -683,6 +685,15 @@ export default function PluginLayout() {
             {showInvite && samplePackState.selectedPackId && !selectedProjectId && (
               <InviteModal open={showInvite} onClose={() => setShowInvite(false)} projectId={samplePackState.selectedPackId} />
             )}
+            {showShare && selectedProjectId && currentProject && (
+              <ShareModal
+                open={showShare}
+                onClose={() => setShowShare(false)}
+                projectId={selectedProjectId}
+                projectName={currentProject.name}
+                initialShareToken={(currentProject as any).shareToken ?? null}
+              />
+            )}
 
             <div className="flex-1 flex min-h-0 gap-2">
               {activeCommunityRoomId ? (
@@ -700,6 +711,7 @@ export default function PluginLayout() {
                       onTimeSignatureChange={(ts) => updateProject(currentProject.id, { timeSignature: ts } as any)}
                       onShowVersionHistory={() => { setShowVersionHistory((v) => !v); if (!showVersionHistory) fetchVersions(selectedProjectId); }}
                       onShareToFeed={handleShareProject}
+                      onShareLink={() => setShowShare(true)}
                       onInvite={() => setShowInvite(true)}
                       onDelete={handleDeleteProject}
                       onLeave={handleLeaveProject}

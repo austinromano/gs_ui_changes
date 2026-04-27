@@ -36,6 +36,10 @@ export const projects = sqliteTable('projects', {
   // persist the arrangement across sessions and sync it in real time between
   // collaborators.
   arrangementJson: text('arrangement_json'),
+  // Public read-only sharing. Null = private; any non-null value is a
+  // random token someone can hit /p/<token> with to view + listen without
+  // an account. Stored unique so a leaked token only exposes one project.
+  shareToken: text('share_token').unique(),
   createdAt: timestamp('created_at').notNull(),
   updatedAt: timestamp('updated_at').notNull(),
 });

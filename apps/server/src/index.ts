@@ -23,6 +23,7 @@ import socialRoutes from './routes/social.js';
 import dmRoutes from './routes/directMessages.js';
 import bookingsRoutes from './routes/bookings.js';
 import communityRoutes from './routes/communities.js';
+import publicShareRoutes from './routes/publicShare.js';
 import { setupWebSocket } from './ws/index.js';
 import { initDatabase } from './db/index.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -87,6 +88,8 @@ app.route('/api/v1/social', socialRoutes);
 app.route('/api/v1/dm', dmRoutes);
 app.route('/api/v1/bookings', bookingsRoutes);
 app.route('/api/v1/communities', communityRoutes);
+// Public read-only project share — no auth, gated by share token
+app.route('/api/v1/public/projects', publicShareRoutes);
 
 // Serve the desktop app build
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -122,6 +125,11 @@ app.get('/sw.js', serveStatic({ root: './public', path: '/sw.js' }));
 app.get('/sw.js', serveStatic({ root: '../desktop/dist', path: '/sw.js' }));
 app.get('/', serveStatic({ root: './public', path: '/index.html' }));
 app.get('/', serveStatic({ root: '../desktop/dist', path: '/index.html' }));
+
+// SPA fallback for the public share route — serve index.html so client-side
+// routing in App.tsx can pick up `/p/<token>` and render the viewer.
+app.get('/p/*', serveStatic({ root: './public', path: '/index.html' }));
+app.get('/p/*', serveStatic({ root: '../desktop/dist', path: '/index.html' }));
 
 // One-time DB reset (requires authentication)
 app.delete('/api/v1/admin/reset-all', authMiddleware, async (c) => {

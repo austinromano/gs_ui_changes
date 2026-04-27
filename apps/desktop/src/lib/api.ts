@@ -163,6 +163,26 @@ export const api = {
     return res.arrayBuffer();
   },
 
+  // Public sharing — read-only project links anyone can open without an account
+  enableShare: (projectId: string) =>
+    request<{ shareToken: string }>('POST', `/projects/${projectId}/share`),
+  disableShare: (projectId: string) =>
+    request<void>('DELETE', `/projects/${projectId}/share`),
+  getPublicProject: async (token: string): Promise<ProjectDetail> => {
+    const res = await fetch(`${BASE_URL}/public/projects/${token}`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+    return json.data;
+  },
+  downloadPublicFile: async (token: string, fileId: string): Promise<ArrayBuffer> => {
+    const res = await fetch(`${BASE_URL}/public/projects/${token}/files/${fileId}/download`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Download failed: HTTP ${res.status} — ${text}`);
+    }
+    return res.arrayBuffer();
+  },
+
   // Sample Packs
   listSamplePacks: () => request<any[]>('GET', '/sample-packs'),
   createSamplePack: (data: { name: string }) => request<any>('POST', '/sample-packs', data),

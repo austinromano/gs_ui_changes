@@ -190,6 +190,46 @@ projectRoutes.patch('/:id', async (c) => {
   return c.json({ success: true, data: updated });
 });
 
+// POST /:id/share — generate (or return) a public read-only share token.
+// Idempotent: re-enabling on an already-shared project returns the same
+// token so existing links keep working.
+projectRoutes.post('/:id/share', async (c) => {
+  const user = c.get('user') as AuthUser;
+  const projectId = c.req.param('id');
+  await assertEditor(projectId, user.id);
+
+  const [existing] = await db.select({ shareToken: projects.shareToken })
+    .from(projects).where(eq(projects.id, projectId)).limit(1).all();
+  if (!existing) throw new HTTPException(404, { message: 'Project not found' });
+
+  if (existing.shareToken) {
+    return c.json({ success: true, data: { shareToken: existing.shareToken } });
+  }
+
+  // Crypto-random 32-char token. URL-safe base64 of 24 random bytes.
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  const token = Buffer.from(bytes).toString('base64url');
+
+  await db.update(projects).set({ shareToken: token, updatedAt: new Date().toISOString() })
+    .where(eq(projects.id, projectId)).run();
+
+  return c.json({ success: true, data: { shareToken: token } });
+});
+
+// DELETE /:id/share — revoke the public link. Existing /p/<token> URLs
+// will 404 immediately after this returns.
+projectRoutes.delete('/:id/share', async (c) => {
+  const user = c.get('user') as AuthUser;
+  const projectId = c.req.param('id');
+  await assertEditor(projectId, user.id);
+
+  await db.update(projects).set({ shareToken: null, updatedAt: new Date().toISOString() })
+    .where(eq(projects.id, projectId)).run();
+
+  return c.json({ success: true });
+});
+
 // PUT /:id/arrangement — full arrangement blob (clip offsets, trims, volumes,
 // mute/solo, pitch). Editors can write. We store as a JSON string and emit
 // project-updated so every collaborator in the room refreshes their layout.
