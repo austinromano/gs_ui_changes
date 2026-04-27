@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAudioStore, pendingTrackOffsets, pendingTrackProps } from '../../stores/audioStore';
 import { useProjectStore } from '../../stores/projectStore';
-import { audioBufferCache, cacheBuffer, detectBpmFromName, formatTime, snapToGrid } from '../../lib/audio';
+import { audioBufferCache, cacheBuffer, detectBpmFromName, formatTime, getAudioData, snapToGrid } from '../../lib/audio';
 import { api } from '../../lib/api';
 import { getSocket } from '../../lib/socket';
 import { useCollabStore } from '../../stores/collabStore';
@@ -68,6 +68,9 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
 
   useEffect(() => {
     if (!tracks || !projectId) return;
+    // Track which fileIds we've already kicked a fetch for so we don't
+    // spawn a new request every 500 ms while the original is in flight.
+    const fetchingFileIds = new Set<string>();
     const tryLoad = () => {
       for (const track of tracks) {
         if (!track.fileId || loadedRef.current.has(track.id)) continue;
@@ -95,6 +98,18 @@ export default function TransportBar({ tracks, projectId, projectTempo, onTempoC
           if (detectedBpm > 0 && onTempoChange && (!projectTempo || projectTempo === 120)) {
             onTempoChange(detectedBpm);
           }
+        } else if (!fetchingFileIds.has(track.fileId)) {
+          // Cache miss — happens when a collaborator just added a new
+          // track and our project re-fetch picked it up before any
+          // Waveform component had a chance to fetch the audio. Kick a
+          // fetch ourselves so the buffer lands in the cache and the
+          // next tryLoad tick picks it up. fire-and-forget; the cache
+          // dedupes if a Waveform was already fetching the same fileId.
+          fetchingFileIds.add(track.fileId);
+          getAudioData(projectId, track.fileId).catch(() => {
+            // re-allow a retry if the fetch failed
+            fetchingFileIds.delete(track.fileId!);
+          });
         }
       }
     };
