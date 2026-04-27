@@ -229,6 +229,28 @@ export default function PluginLayout() {
   const [isBeatView, setIsBeatView] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [trackZoom, setTrackZoom] = useState<'full' | 'half'>('full');
+  // Per-project editor UI state (track zoom, future panel preferences).
+  // Restores on project load so the user re-enters the project with the
+  // same lane height they left it at — no settling time, no surprise.
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    try {
+      const raw = localStorage.getItem(`editor-ui::${selectedProjectId}`);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.trackZoom === 'half' || data.trackZoom === 'full') {
+        setTrackZoom(data.trackZoom);
+      }
+    } catch { /* ignore corrupt blob */ }
+  }, [selectedProjectId]);
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    try {
+      const raw = localStorage.getItem(`editor-ui::${selectedProjectId}`);
+      const existing = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(`editor-ui::${selectedProjectId}`, JSON.stringify({ ...existing, trackZoom }));
+    } catch { /* ignore quota errors */ }
+  }, [selectedProjectId, trackZoom]);
   const [onlineActivity, setOnlineActivity] = useState<Map<string, OnlineUser>>(new Map());
   const [showNotifs, setShowNotifs] = useState(false);
   const [showInbox, setShowInbox] = useState(false);

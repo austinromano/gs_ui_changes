@@ -341,18 +341,28 @@ export const useDrumRack = create<DrumRackState>((set, get) => ({
     try {
       const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(persistKey(projectId)) : null;
       if (raw) {
-        const data = JSON.parse(raw) as { rows: DrumRow[]; clips: DrumClip[]; selectedClipId: string | null };
-        // Strip any stale buffers from the persisted blob; we rehydrate below.
+        const data = JSON.parse(raw) as {
+          rows: DrumRow[]; clips: DrumClip[]; selectedClipId: string | null;
+          // UI state — open + expanded restore the panel exactly as the
+          // user left it on their last visit so the editor stays "warm".
+          open?: boolean; expanded?: boolean;
+        };
         const rows = (data.rows || []).map((r) => ({ ...r, buffer: undefined }));
         const clips = data.clips || [];
         const selectedClipId = data.selectedClipId ?? null;
-        set({ rows, clips, selectedClipId });
+        set({
+          rows, clips, selectedClipId,
+          open: data.open ?? false,
+          expanded: data.expanded ?? false,
+        });
       } else {
-        // Fresh project — start with 4 empty slots.
+        // Fresh project — start with 4 empty slots and the panel closed.
         set({
           rows: [makeRow(), makeRow(), makeRow(), makeRow()],
           clips: [],
           selectedClipId: null,
+          open: false,
+          expanded: false,
         });
       }
     } catch {
@@ -360,6 +370,8 @@ export const useDrumRack = create<DrumRackState>((set, get) => ({
         rows: [makeRow(), makeRow(), makeRow(), makeRow()],
         clips: [],
         selectedClipId: null,
+        open: false,
+        expanded: false,
       });
     } finally {
       _hydrating = false;
@@ -465,9 +477,17 @@ useDrumRack.subscribe((state) => {
   const payload = buildSyncPayload(state.rows, state.clips);
   const json = JSON.stringify(payload);
 
-  // localStorage save (also stores selectedClipId for own-session restore).
+  // localStorage save — payload (rows + clips) is the same blob peers
+  // receive over the socket; selectedClipId / open / expanded are
+  // local-only UI state so the editor restores its panel position on
+  // re-open instead of resetting every time the user comes back.
   try {
-    const persisted = { ...payload, selectedClipId: state.selectedClipId };
+    const persisted = {
+      ...payload,
+      selectedClipId: state.selectedClipId,
+      open: state.open,
+      expanded: state.expanded,
+    };
     localStorage.setItem(persistKey(_currentProjectId), JSON.stringify(persisted));
   } catch { /* quota / serialization — ignore */ }
 
