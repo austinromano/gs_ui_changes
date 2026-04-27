@@ -92,7 +92,11 @@ function composePlayBuffer(
   const warpActive = track.warp !== false && !!sourceBpm && sourceBpm > 0 && projectBpm > 0;
   const warpFactor = warpActive ? (sourceBpm! / projectBpm) : 1;
   const stretchFactor = warpFactor * pitchFactor;
-  if (Math.abs(stretchFactor - 1) < 0.005 || stretchFactor < 0.4 || stretchFactor > 2.5) {
+  // Only run WSOLA if the stretch is meaningful — anything inside ±2% is
+  // imperceptible in tempo terms and not worth the spectral artefacts a
+  // time-stretch always introduces. Same bail-out at extreme ratios where
+  // WSOLA breaks down (use the source as-is plus playbackRate).
+  if (Math.abs(stretchFactor - 1) < 0.02 || stretchFactor < 0.4 || stretchFactor > 2.5) {
     return { buffer: track.originalBuffer, playbackRate: pitchFactor };
   }
   try {
@@ -280,15 +284,20 @@ export const useAudioStore = create<AudioState>((set, get) => {
 
       const gain = ctx.createGain();
       gain.gain.value = track.muted ? 0 : track.volume;
-      // Per-track analyser feeds the lane header's level meter. Tapping
-      // off the gain node means the meter reflects the user's volume +
-      // mute state automatically.
+      // Audio path is short and direct: source → gain → mixer bus. No
+      // node sits between the gain stage and the bus that could colour
+      // the signal.
+      source.connect(gain);
+      gain.connect(getMaster());
+      // Meter tap — branches off the gain in PARALLEL so it does not sit
+      // in the audio path. AnalyserNode is spec'd as transparent but
+      // every node in series adds a render-quantum of latency and a
+      // numerical pass; keeping the path clean was the cleanest fix for
+      // the "filtered" sound.
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.6;
-      source.connect(gain);
       gain.connect(analyser);
-      analyser.connect(getMaster());
       track.analyser = analyser;
 
       const trimStart = track.trimStart;
