@@ -25,6 +25,10 @@ let audioCtx: AudioContext | null = null;
 let mixerBus: GainNode | null = null;
 let masterGain: GainNode | null = null;
 let masterAnalyser: AnalyserNode | null = null;
+// Brickwall limiter on the master output. Inserted asynchronously once
+// the worklet registers (init() builds the graph without it, then
+// hot-swaps the master→destination edge through the limiter).
+let masterLimiter: AudioWorkletNode | null = null;
 // Drum sub-bus: every drum row sums into here, then drumBus → mixerBus.
 // Lets the Drum Rack lane meter tap the SUM of all drum hits in
 // parallel without affecting the audio path.
@@ -72,6 +76,33 @@ function init() {
   // chain on, so they're passive observers of the bus they tap.
   drumBus.connect(drumAnalyser);
   masterGain.connect(masterAnalyser);
+
+  // Async-install the brickwall limiter on the master path. While it's
+  // loading, audio runs through the direct masterGain → destination
+  // edge built above. Once the worklet registers we swap that edge
+  // for masterGain → masterLimiter → destination atomically per
+  // render quantum (a brief click is unlikely; below-ceiling audio
+  // passes through transparent).
+  ensureMasterLimiterWorklet().then(() => {
+    if (!audioCtx || !masterGain) return;
+    if (masterLimiter) return; // already installed
+    try {
+      masterLimiter = new AudioWorkletNode(audioCtx, 'master-limiter', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+      });
+      masterGain.disconnect(audioCtx.destination);
+      masterGain.connect(masterLimiter);
+      masterLimiter.connect(audioCtx.destination);
+    } catch (err) {
+      // Worklet failed to construct — leave the direct edge in place
+      // so audio still reaches the destination.
+      if (typeof console !== 'undefined') console.warn('[graph] master limiter install failed', err);
+    }
+  }).catch((err) => {
+    if (typeof console !== 'undefined') console.warn('[graph] master limiter not registered', err);
+  });
 }
 
 export function getCtx(): AudioContext {
@@ -124,23 +155,28 @@ export function safeStop(source: AudioBufferSourceNode | null) {
   try { source.stop(); } catch { /* already stopped */ }
 }
 
-// AudioWorklet registration. The processor file lives at
-// /warped-playback-worklet.js (copied from apps/desktop/public). We
-// load it lazily on first use because addModule is async and we
-// don't want to block app startup on it.
-let workletReady: Promise<void> | null = null;
+// AudioWorklet registration. Each processor file lives under
+// apps/desktop/public/ so Vite copies it as a static asset. We load
+// each lazily on first use because addModule is async and we don't
+// want to block app startup on it.
+let warpedPlaybackReady: Promise<void> | null = null;
 export function ensureWarpedPlaybackWorklet(): Promise<void> {
-  if (workletReady) return workletReady;
+  if (warpedPlaybackReady) return warpedPlaybackReady;
   const ctx = getCtx();
-  workletReady = ctx.audioWorklet
+  warpedPlaybackReady = ctx.audioWorklet
     .addModule('/warped-playback-worklet.js')
-    .catch((err) => {
-      // Reset so a future call retries — useful in dev when the file
-      // changes mid-session.
-      workletReady = null;
-      throw err;
-    });
-  return workletReady;
+    .catch((err) => { warpedPlaybackReady = null; throw err; });
+  return warpedPlaybackReady;
+}
+
+let masterLimiterReady: Promise<void> | null = null;
+export function ensureMasterLimiterWorklet(): Promise<void> {
+  if (masterLimiterReady) return masterLimiterReady;
+  const ctx = getCtx();
+  masterLimiterReady = ctx.audioWorklet
+    .addModule('/master-limiter-worklet.js')
+    .catch((err) => { masterLimiterReady = null; throw err; });
+  return masterLimiterReady;
 }
 
 /**
