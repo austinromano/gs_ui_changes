@@ -231,6 +231,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
           min={0}
           max={1.5}
           step={0.01}
+          defaultValue={1}
           format={(v) => `${Math.round(v * 100)}%`}
           onChange={applyVolume}
         />
@@ -241,6 +242,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
           min={PITCH_MIN}
           max={PITCH_MAX}
           step={1}
+          defaultValue={0}
           format={(v) => `${v >= 0 ? '+' : ''}${v} st`}
           onChange={applyPitch}
         />
@@ -251,6 +253,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
           min={-1}
           max={1}
           step={0.01}
+          defaultValue={0}
           format={(v) => Math.abs(v) < 0.005 ? 'C' : (v > 0 ? `R${Math.round(v * 100)}` : `L${Math.round(-v * 100)}`)}
           onChange={applyPan}
         />
@@ -266,6 +269,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
             min={-24}
             max={24}
             step={0.5}
+            defaultValue={0}
             format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)} dB`}
             onChange={(v) => applyEqBand('low', v)}
           />
@@ -276,6 +280,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
             min={-24}
             max={24}
             step={0.5}
+            defaultValue={0}
             format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)} dB`}
             onChange={(v) => applyEqBand('mid', v)}
           />
@@ -286,6 +291,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
             min={-24}
             max={24}
             step={0.5}
+            defaultValue={0}
             format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)} dB`}
             onChange={(v) => applyEqBand('high', v)}
           />
@@ -304,6 +310,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
             min={-60}
             max={0}
             step={0.5}
+            defaultValue={0}
             format={(v) => `${v.toFixed(1)} dB`}
             onChange={(v) => applyCompField('threshold', v)}
           />
@@ -314,6 +321,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
             min={1}
             max={20}
             step={0.1}
+            defaultValue={1}
             format={(v) => `${v.toFixed(1)}:1`}
             onChange={(v) => applyCompField('ratio', v)}
           />
@@ -324,6 +332,7 @@ export default function SampleEditorPanel({ projectId }: { projectId: string }) 
             min={-20}
             max={20}
             step={0.5}
+            defaultValue={0}
             format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)} dB`}
             onChange={(v) => applyCompField('makeup', v)}
           />
@@ -403,7 +412,7 @@ function Pill({ icon, label }: { icon: 'bpm' | 'time' | 'dot'; label: string }) 
   );
 }
 
-function Slider({ label, value, min, max, step, format, onChange, mixed }: {
+function Slider({ label, value, min, max, step, format, onChange, mixed, defaultValue }: {
   label: string;
   value: number;
   min: number;
@@ -412,6 +421,7 @@ function Slider({ label, value, min, max, step, format, onChange, mixed }: {
   format: (v: number) => string;
   onChange: (v: number) => void;
   mixed?: boolean;
+  defaultValue?: number;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -426,6 +436,8 @@ function Slider({ label, value, min, max, step, format, onChange, mixed }: {
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
+        onDoubleClick={() => { if (defaultValue !== undefined) onChange(defaultValue); }}
+        title={defaultValue !== undefined ? 'Double-click to reset' : undefined}
         className="w-full accent-ghost-green"
         style={{ opacity: mixed ? 0.6 : 1 }}
       />
