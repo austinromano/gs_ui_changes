@@ -278,27 +278,50 @@ export default function PluginLayout() {
     } catch { /* ignore quota errors */ }
   }, [selectedProjectId, selectedTrackIds]);
 
-  // Restore: as soon as the audio store has loaded at least one track
-  // for the current project, replay the saved selection. Filtering by
-  // `loadedTracks.has(id)` drops stale ids whose tracks were deleted
-  // since last visit. The ref guard means we restore exactly once per
-  // project switch.
+  // Restore: replay the saved selection as soon as the matching track
+  // is in the audio store. Tracks load asynchronously, so the saved
+  // selection might point to a track that hasn't decoded yet — keep
+  // re-attempting on every loadedTracks change until one of:
+  //   1. We find a match and restore it
+  //   2. There's no saved blob / the saved selection is empty
+  //   3. Every track the project knows about is already loaded and
+  //      none match (saved id was for a deleted track)
+  // Once any of those bail conditions hits, the restore-guard ref is
+  // set and the save effect can start writing future changes.
+  const expectedTrackCount = (currentProject?.tracks as any[] || [])
+    .filter((t) => t && t.fileId).length;
   useEffect(() => {
     if (!selectedProjectId) return;
     if (selectionRestoredFor.current === selectedProjectId) return;
     if (loadedTracks.size === 0) return;
+    let done = false;
     try {
       const raw = localStorage.getItem(`editor-ui::${selectedProjectId}`);
-      if (raw) {
+      if (!raw) {
+        done = true;
+      } else {
         const data = JSON.parse(raw);
-        if (Array.isArray(data.selectedTrackIds)) {
-          const valid = (data.selectedTrackIds as string[]).filter((id) => loadedTracks.has(id));
-          if (valid.length > 0) setSelectedTrackIds(valid);
+        const savedIds = Array.isArray(data.selectedTrackIds) ? (data.selectedTrackIds as string[]) : [];
+        if (savedIds.length === 0) {
+          done = true;
+        } else {
+          const valid = savedIds.filter((id) => loadedTracks.has(id));
+          if (valid.length > 0) {
+            setSelectedTrackIds(valid);
+            done = true;
+          } else if (expectedTrackCount > 0 && loadedTracks.size >= expectedTrackCount) {
+            // All expected tracks are loaded but none matched — saved
+            // selection points at deleted tracks. Give up so saves
+            // can begin from the user's next click.
+            done = true;
+          }
         }
       }
-    } catch { /* ignore corrupt blob */ }
-    selectionRestoredFor.current = selectedProjectId;
-  }, [selectedProjectId, loadedTracks, setSelectedTrackIds]);
+    } catch {
+      done = true;
+    }
+    if (done) selectionRestoredFor.current = selectedProjectId;
+  }, [selectedProjectId, loadedTracks, setSelectedTrackIds, expectedTrackCount]);
 
   // Reset the restore guard whenever the user switches projects so the
   // next project gets its own one-shot restore pass.
