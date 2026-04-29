@@ -14,11 +14,11 @@
     @apply text-white font-sans antialiased;
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
-    background: #0A0412;
+    background: #0E1126;
     background-image:
       radial-gradient(ellipse at 15% 30%, rgba(120, 40, 200, 0.15) 0%, transparent 50%),
       radial-gradient(ellipse at 85% 20%, rgba(0, 180, 216, 0.08) 0%, transparent 45%),
-      radial-gradient(ellipse at 50% 100%, rgba(10, 4, 18, 1) 0%, transparent 20%);
+      radial-gradient(ellipse at 50% 100%, rgba(14, 17, 38, 1) 0%, transparent 20%);
   }
 
   ::-webkit-scrollbar { width: 4px; height: 4px; }
